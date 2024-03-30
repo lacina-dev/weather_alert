@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+"""
+Weather alert node, publishing current rain status base on RainViewer API.
+"""
+import time
+import sys
+import signal
+import rospy
+from std_msgs.msg import Bool, String
+from weather_alert.rainviewer import RainViewer
+
+class Node:
+
+    def __init__(self):
+        self.pub_test = rospy.Publisher('/test_pub', String, queue_size=10)
+        self.sub_test = rospy.Subscriber("/test_sub", String, self.callback_test)
+        self.lat = None
+        self.lon = None
+        self.radar_config = None
+        self.use_map = None
+        self.namespace = rospy.get_namespace()
+        print('Namespace: {}'.format(self.namespace))
+        self.load_params()
+        print('Getting data from Rain viewer API...')
+        self.rain_viewer = RainViewer(self.lat, self.lon, self.radar_config, self.use_map)
+        self.rain_viewer.process_data()
+        self.rain_viewer.print_rain_status()
+        self.rain_viewer.evaluate_data()
+
+    def load_params(self):
+        """
+        Load rosparams.
+
+        :return: none
+        """
+        config = rospy.get_param('{}'.format(self.namespace))
+        default_location = config['general']['default_location']
+        self.lat = float(config[default_location]['lat'])
+        self.lon = float(config[default_location]['lon'])
+        self.radar_config = dict(config['radar'])
+        self.use_map = int(config['general']['use_map'])
+
+    def check_for_new_data(self):
+        """
+        Check for new data from RainViewer API.
+
+        :return: none
+        """
+        result = self.rain_viewer.update_data()
+        if result:
+            rospy.loginfo("<{}> New map list received.".format(rospy.get_caller_id()))
+            self.rain_viewer.process_data()
+            self.rain_viewer.print_rain_status()
+            self.rain_viewer.evaluate_data()
+
+
+
+
+    def publish_test(self):
+        msg = String()
+        msg.data = "TEST"
+        self.pub_test.publish(msg)
+
+    def callback_test(self, msg):
+        rospy.loginfo("<{}> {}".format(rospy.get_caller_id(), msg.data))
+
+
+
+
+if __name__ == '__main__':
+    try:
+        rospy.init_node('test_node')
+        rospy.loginfo("<{}> Initialising...".format(rospy.get_caller_id()))
+        node = Node()
+        r = rospy.Rate(3)  # Hz
+
+        def signal_handler():
+            rospy.signal_shutdown("end")
+            sys.exit(0)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        while not rospy.is_shutdown():
+            node.publish_test()
+            node.check_for_new_data()
+            r.sleep()
+
+    except rospy.ROSInterruptException:
+        rospy.logerr("<{}> error.".format(rospy.get_caller_id()))
