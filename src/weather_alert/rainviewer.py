@@ -173,15 +173,15 @@ class RainViewer:
 
     def evaluate_data(self):
         rain_data = self.get_rain_data()
-        print('Evaluate data for last 4 observations:')
-        for observation in rain_data['observations'][-5:-1]:
-            print('Time: {}  Type: {}  Status: {}  [{:6.2f}% warn] [{:6.2f}% alert] [{:6.2f}% rain]'
-                  .format(observation['time'],
-                          observation['type'],
-                          observation['final_status'],
-                          observation['percent_warn'],
-                          observation['percent_alert'],
-                          observation['percent_rain']))
+        rain_alert = False
+        rain_now = False
+        for observation in rain_data['observations'][-4:]:
+            if observation['percent_rain'] > VALUES.RAIN_ALERT_IGNORE_PRC or \
+               observation['percent_alert'] > VALUES.RAIN_ALERT_IGNORE_PRC:
+                rain_alert = True
+        if rain_data['observations'][-4]['percent_rain'] > 0:
+            rain_now = True
+        return rain_alert, rain_now, rain_data
 
     def print_rain_status(self):
         """
