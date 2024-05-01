@@ -8,12 +8,14 @@ import signal
 import rospy
 from std_msgs.msg import Bool, String
 from weather_alert.rainviewer import RainViewer
+from weather_alert.msg import RainAlert
 
 class Node:
 
     def __init__(self):
-        self.pub_test = rospy.Publisher('/test_pub', String, queue_size=10)
-        self.sub_test = rospy.Subscriber("/test_sub", String, self.callback_test)
+        self.pub_alert = rospy.Publisher('rain_alert', RainAlert, queue_size=10, latch=True)
+        self.nex_log_info_pub = rospy.Publisher('/nextion/log_info', String, queue_size=10)
+        self.status_msg_pub = rospy.Publisher('navi_manager/status', String, queue_size=10)
         self.lat = None
         self.lon = None
         self.radar_config = None
@@ -24,8 +26,8 @@ class Node:
         print('Getting data from Rain viewer API...')
         self.rain_viewer = RainViewer(self.lat, self.lon, self.radar_config, self.use_map)
         self.rain_viewer.process_data()
-        self.rain_viewer.print_rain_status()
-        self.rain_viewer.evaluate_data()
+        # self.rain_viewer.print_rain_status()
+        self.publish_data()
 
     def load_params(self):
         """
@@ -40,6 +42,50 @@ class Node:
         self.radar_config = dict(config['radar'])
         self.use_map = int(config['general']['use_map'])
 
+    def publish_data(self):
+        """
+        Publish rain status.
+
+        :return: none
+        """
+        rain_alert, rain_now, rain_data = self.rain_viewer.evaluate_data()
+        msg = RainAlert()
+        msg.time = rospy.Time.now()
+        msg.rain_alert = rain_alert
+        msg.rain_now = rain_now
+        msg.status_past60m = rain_data['observations'][-10]['final_status']
+        msg.status_past50m = rain_data['observations'][-9]['final_status']
+        msg.status_past40m = rain_data['observations'][-8]['final_status']
+        msg.status_past30m = rain_data['observations'][-7]['final_status']
+        msg.status_past20m = rain_data['observations'][-6]['final_status']
+        msg.status_past10m = rain_data['observations'][-5]['final_status']
+        msg.status_now = rain_data['observations'][-4]['final_status']
+        msg.status_nowcast10m = rain_data['observations'][-3]['final_status']
+        msg.status_nowcast20m = rain_data['observations'][-2]['final_status']
+        msg.status_nowcast30m = rain_data['observations'][-1]['final_status']
+        self.pub_alert.publish(msg)
+        for observation in rain_data['observations'][-10:]:
+
+            rospy.loginfo('<{}> Time: {}  Type: {}  Status: {}  [{:6.2f}% warn] [{:6.2f}% alert] [{:6.2f}% rain]'
+                          .format(rospy.get_caller_id(),
+                                  observation['time'],
+                                  observation['type'],
+                                  observation['final_status'],
+                                  observation['percent_warn'],
+                                  observation['percent_alert'],
+                                  observation['percent_rain']))
+        if rain_alert:
+            print('Rain alert!')
+            self.nex_log_info_pub.publish("Rain alert!")
+            self.status_msg_pub.publish("Rain alert!")
+        if rain_now > 0:
+            print('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
+            self.nex_log_info_pub.publish('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
+            self.status_msg_pub.publish('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
+
+
+
+
     def check_for_new_data(self):
         """
         Check for new data from RainViewer API.
@@ -47,22 +93,18 @@ class Node:
         :return: none
         """
         result = self.rain_viewer.update_data()
+
         if result:
             rospy.loginfo("<{}> New map list received.".format(rospy.get_caller_id()))
             self.rain_viewer.process_data()
-            self.rain_viewer.print_rain_status()
-            self.rain_viewer.evaluate_data()
+            # self.rain_viewer.print_rain_status()
+            self.publish_data()
 
 
 
 
-    def publish_test(self):
-        msg = String()
-        msg.data = "TEST"
-        self.pub_test.publish(msg)
 
-    def callback_test(self, msg):
-        rospy.loginfo("<{}> {}".format(rospy.get_caller_id(), msg.data))
+
 
 
 
@@ -72,7 +114,7 @@ if __name__ == '__main__':
         rospy.init_node('test_node')
         rospy.loginfo("<{}> Initialising...".format(rospy.get_caller_id()))
         node = Node()
-        r = rospy.Rate(3)  # Hz
+        r = rospy.Rate(0.2)  # Hz
 
         def signal_handler():
             rospy.signal_shutdown("end")
@@ -80,7 +122,6 @@ if __name__ == '__main__':
         signal.signal(signal.SIGINT, signal_handler)
 
         while not rospy.is_shutdown():
-            node.publish_test()
             node.check_for_new_data()
             r.sleep()
 
