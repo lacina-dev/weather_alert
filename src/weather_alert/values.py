@@ -21,3 +21,4 @@ class Values:
         self.color_dark_grey = (79, 79, 47)
         self.color_red = (0, 0, 255)
         self.color_green = (0, 255, 0)
+        self.RAIN_ALERT_IGNORE_PRC = 3

@@ -2,16 +2,17 @@
 ## Rain alert message
 #################################
 
-uint8 NO_RAIN=0
-uint8 WARNING=1
-uint8 ALERT=2
-uint8 RAIN=3
-
 Header      header
-int32       time
-int8        status10m
-int8        status20m
-int8        status30m
-int8        status40m
-int8        status50m
-int8        status60m
+time        time
+bool        rain_alert
+int8        rain_now
+string      status_past60m
+string      status_past50m
+string      status_past40m
+string      status_past30m
+string      status_past20m
+string      status_past10m
+string      status_now
+string      status_nowcast10m
+string      status_nowcast20m
+string      status_nowcast30m

@@ -3,7 +3,7 @@
 #################################
 
 Header      header
-int32       time
+time        time
 string      summary
 string      precip_type
 float32     precip_intensity
