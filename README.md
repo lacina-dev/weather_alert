@@ -1,12 +1,16 @@
 # weather_alert
- Weather alert package based on Rainwiever API. You can run it standalone or as ROS node and use it for rain forecast on your robot. It's made for VITULUS robot, but can be run on other robots too.
+ Weather alert package is based on Rainwiever API. [https://www.rainviewer.com/api.html](https://www.rainviewer.com/api.html)
 
- For map support install [docker-mapproxy](https://github.com/lacina-dev/docker-mapproxy) and run this container.
+ Monitors rain based on radar data from API and publishes ROS messages with 60 minute history and 30 minute forecast every 10 minutes.
+
+ You can run it standalone or as ROS node and use it for rain forecast on your robot. It's made for VITULUS robot, but can be run on other robots too.
+
+ For map support clone [docker-mapproxy](https://github.com/lacina-dev/docker-mapproxy) and run this container.
 
  Follow the comments in the config/config.yaml and adjust lat, lon, etc. for your needs.
 
- Standalone 
- Run scripts/main.py and then you can check, if you get what you need.
+ ### Standalone
+ Run `python3 scripts/main.py` and then you can check if you are getting what you need. It shows you the current situation in pictures to make sure the configuration is correct.
 
 
  *Current rain situation with map and detection frames on the position you configured.*
@@ -16,9 +20,9 @@
  ![Now and forecast](img/rain.png)
 
 
- ROS (Noetic tested) 
+ ### ROS (Noetic tested)
  Compile this package in your catkin workspace and run
- **roslaunch weather_alert weather_alert.launch**
+ `roslaunch weather_alert weather_alert.launch`
 
 
  Publications:
@@ -29,4 +33,4 @@
 
   * /weather_alert/rain_alert *[weather_alert/RainAlert]*
 
-    Rain data in ten minute step. Now, 60 minutes to past and 30 minutes forecast.
+    Rain data in ten minute step. Now, 60 minutes to past and 30 minutes forecast. See the message.
