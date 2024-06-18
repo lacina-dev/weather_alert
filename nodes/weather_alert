@@ -3,39 +3,40 @@
 Weather alert node, publishing current rain status base on RainViewer API.
 """
 import time
+from types import FrameType
+from typing import Optional
 import sys
 import signal
 import rospy
-from std_msgs.msg import Bool, String
+from std_msgs.msg import String
 from weather_alert.rainviewer import RainViewer
 from weather_alert.msg import RainAlert
 
-class Node:
 
+class Node:
+    """
+    ROS node for weather alert. Publishing rain status messages.
+    """
     def __init__(self):
         self.pub_alert = rospy.Publisher('rain_alert', RainAlert, queue_size=10, latch=True)
-        self.nex_log_info_pub = rospy.Publisher('/nextion/log_info', String, queue_size=10)
-        self.status_msg_pub = rospy.Publisher('navi_manager/status', String, queue_size=10)
+        self.nex_log_info_pub = rospy.Publisher('log_info', String, queue_size=10)
         self.lat = None
         self.lon = None
         self.radar_config = None
         self.use_map = None
         self.namespace = rospy.get_namespace()
-        print('Namespace: {}'.format(self.namespace))
         self.load_params()
-        print('Getting data from Rain viewer API...')
         self.rain_viewer = RainViewer(self.lat, self.lon, self.radar_config, self.use_map)
         self.rain_viewer.process_data()
-        # self.rain_viewer.print_rain_status()
         self.publish_data()
 
     def load_params(self):
         """
-        Load rosparams.
+        Load config from rosparams.
 
         :return: none
         """
-        config = rospy.get_param('{}'.format(self.namespace))
+        config = rospy.get_param(f'{self.namespace}')
         default_location = config['general']['default_location']
         self.lat = float(config[default_location]['lat'])
         self.lon = float(config[default_location]['lon'])
@@ -66,25 +67,18 @@ class Node:
         self.pub_alert.publish(msg)
         for observation in rain_data['observations'][-10:]:
 
-            rospy.loginfo('<{}> Time: {}  Type: {}  Status: {}  [{:6.2f}% warn] [{:6.2f}% alert] [{:6.2f}% rain]'
-                          .format(rospy.get_caller_id(),
-                                  observation['time'],
-                                  observation['type'],
-                                  observation['final_status'],
-                                  observation['percent_warn'],
-                                  observation['percent_alert'],
-                                  observation['percent_rain']))
+            rospy.loginfo(f"<{rospy.get_caller_id()}> Time: {observation['time']} "
+                          f"Type: {observation['type']}  Status: {observation['final_status']} "
+                          f"[{observation['percent_warn']:6.2f}% warn] "
+                          f"[{observation['percent_alert']:6.2f}% alert] "
+                          f"[{observation['percent_rain']:6.2f}% rain]")
         if rain_alert:
-            print('Rain alert!')
+            rospy.logwarn('Rain alert!')
             self.nex_log_info_pub.publish("Rain alert!")
-            self.status_msg_pub.publish("Rain alert!")
         if rain_now > 0:
-            print('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
-            self.nex_log_info_pub.publish('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
-            self.status_msg_pub.publish('Rain now {}%.'.format(int(rain_data['observations'][-4]['percent_rain'])))
-
-
-
+            rospy.logwarn(f"Rain now {int(rain_data['observations'][-4]['percent_rain'])}%")
+            self.nex_log_info_pub.publish(
+                f"Rain now {int(rain_data['observations'][-4]['percent_rain'])}%.")
 
     def check_for_new_data(self):
         """
@@ -95,29 +89,33 @@ class Node:
         result = self.rain_viewer.update_data()
 
         if result:
-            rospy.loginfo("<{}> New map list received.".format(rospy.get_caller_id()))
+            rospy.loginfo(f"<{rospy.get_caller_id()}> New map list received.")
             self.rain_viewer.process_data()
             # self.rain_viewer.print_rain_status()
             self.publish_data()
 
 
-
-
-
-
-
-
-
-
 if __name__ == '__main__':
     try:
-        rospy.init_node('test_node')
-        rospy.loginfo("<{}> Initialising...".format(rospy.get_caller_id()))
+        rospy.init_node('weather_alert_node')
+        rospy.loginfo(f"<{rospy.get_caller_id()}> Initialising...")
         node = Node()
         r = rospy.Rate(0.2)  # Hz
 
-        def signal_handler():
+        def signal_handler(signal_num: int, frame: Optional[FrameType]) -> None:
+            """
+            Handles the SIGINT signal (Ctrl+C) by shutting down
+            the ROS node and exiting the program.
+
+            :param signal_num: The signal number
+            :param frame: The current stack frame
+            :return: None
+            """
+            signal_name = signal.Signals(signal_num).name
+            rospy.loginfo(f"<{rospy.get_caller_id()}> Received signal {signal_num} ({signal_name})")
+            rospy.loginfo(f"<{rospy.get_caller_id()}> Shutting down weather alert node.")
             rospy.signal_shutdown("end")
+            time.sleep(1)  # wait for a second to ensure all log messages are written
             sys.exit(0)
         signal.signal(signal.SIGINT, signal_handler)
 
@@ -126,4 +124,4 @@ if __name__ == '__main__':
             r.sleep()
 
     except rospy.ROSInterruptException:
-        rospy.logerr("<{}> error.".format(rospy.get_caller_id()))
+        rospy.logerr(f"<{rospy.get_caller_id()}> error.")
