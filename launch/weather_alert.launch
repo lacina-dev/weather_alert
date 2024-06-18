@@ -2,13 +2,10 @@
 
     <arg name="arg_ns" default="weather_alert"/>
     <group ns="$(arg arg_ns)">
-        <rosparam command="load"
-            file="$(find weather_alert)/config/config.yaml" />
-
+        <rosparam command="load" file="$(find weather_alert)/config/config.yaml" />
         <node name="weather_alert" pkg="weather_alert" type="weather_alert" respawn="true" respawn_delay="10" output="screen">
-
+            <remap from="log_info" to="/nextion/log_info" />
         </node>
-
     </group>
 
 </launch>
