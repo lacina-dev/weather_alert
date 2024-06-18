@@ -1,2 +1,32 @@
 # weather_alert
- Weather alert ROS package
+ Weather alert package based on Rainwiever API. You can run it standalone or as ROS node and use it for rain forecast on your robot. It's made for VITULUS robot, but can be run on other robots too.
+
+ For map support install [docker-mapproxy](https://github.com/lacina-dev/docker-mapproxy) and run this container.
+
+ Follow the comments in the config/config.yaml and adjust lat, lon, etc. for your needs.
+
+ Standalone 
+ Run scripts/main.py and then you can check, if you get what you need.
+
+
+ *Current rain situation with map and detection frames on the position you configured.*
+ ![Now with map](img/map.png)
+
+ *Current rain situation and forecast.*
+ ![Now and forecast](img/rain.png)
+
+
+ ROS (Noetic tested) 
+ Compile this package in your catkin workspace and run
+ **roslaunch weather_alert weather_alert.launch**
+
+
+ Publications:
+  * log_info *[std_msgs/String]*
+
+    Short text if rain alert e.g. Rain now 100%. Published when new forecast received.
+
+
+  * /weather_alert/rain_alert *[weather_alert/RainAlert]*
+
+    Rain data in ten minute step. Now, 60 minutes to past and 30 minutes forecast.
