@@ -7,7 +7,7 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime
-from typing import List, Union, Any, Dict
+from typing import List, Union, Any, Dict, Tuple
 
 import cv2
 
@@ -54,7 +54,6 @@ class RainViewer:
         """
         Get map tile from map server or empty img, depend on config.
         """
-        print("Loading map from map server...")
         img_map_tail = MapTile(self.latitude,
                                self.longitude,
                                self.zoom,
@@ -78,12 +77,10 @@ class RainViewer:
             finally:
                 loading = False
         if not loading:
-
             # Process info data
             self.version = self.json_data['version']
             self.generated = self.json_data['generated']
             self.host = self.json_data['host']
-
 
     def timestamp_check(self, timestamp: int) -> bool:
         """
@@ -153,7 +150,7 @@ class RainViewer:
 
         :return: Results of all observations
         """
-        status_list = list()
+        status_list = []
         for observation in self.observations + self.nowcasts:
             observation_status = {'time': observation.time,
                                   'final_status': observation.status,
@@ -171,7 +168,16 @@ class RainViewer:
                   'lon': self.longitude}
         return status
 
-    def evaluate_data(self):
+    def evaluate_data(self) -> (
+            Tuple)[bool, bool, Dict[str, Union[List[Dict[str, Any]], str, float]]]:
+        """
+        Evaluate all radar observations results. Check if rain alert is needed.
+        Check if rain is now.
+
+        :return: Rain alert, True if rain is nearby,
+                 Rain now, True if rain is now in your location
+                 Results of all evaluated observations
+        """
         rain_data = self.get_rain_data()
         rain_alert = False
         rain_now = False
@@ -188,7 +194,7 @@ class RainViewer:
         Print all radar observations results.
         """
         status = self.get_rain_data()
-        print('Generated at: {}  {}'.format(status['generated_date'], status['generated']))
+        print(f"Generated at: {status['generated_date']}  {status['generated']}")
         for observation in status['observations']:
             print('{:^20} {:^7} {:^7} [{:6.2f}% warn] [{:6.2f}% alert] [{:6.2f}% rain]'
                   .format(observation['date'],
@@ -198,7 +204,6 @@ class RainViewer:
                           observation['percent_alert'],
                           observation['percent_rain'],
                           ))
-
 
     def update_data(self) -> bool:
         """
