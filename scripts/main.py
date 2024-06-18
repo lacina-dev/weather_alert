@@ -17,7 +17,7 @@ def main():
     :return: None
     """
     conf_dir = os.path.dirname(os.path.realpath(__file__))
-    conf_dir = "{}/../config/config.yaml".format(conf_dir)
+    conf_dir = f"{conf_dir}/../config/config.yaml"
     config = load_params_from_yaml(conf_dir)
     default_location = config['general']['default_location']
     lat = float(config[default_location]['lat'])
@@ -54,7 +54,7 @@ def load_params_from_yaml(config_path: str) -> dict:
     :param config_path: as string
     :return: config data as a dictionary
     """
-    with open(config_path, 'r') as file:
+    with open(config_path, 'r', encoding="utf-8") as file:
         config_data = yaml.safe_load(file)
     return config_data
 
