@@ -1,6 +1,6 @@
 """
     Class with status and color constants used in RainViewer.
-    """
+"""
 
 
 class Values:
