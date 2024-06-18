@@ -1,11 +1,11 @@
 # weather_alert
  Weather alert package is based on Rainwiever API. [https://www.rainviewer.com/api.html](https://www.rainviewer.com/api.html)
 
- Monitors rain based on radar data from API and publishes ROS messages with 60 minute history and 30 minute forecast every 10 minutes.
+ Monitors rain based on radar data from API and publishes ROS messages with 60 minute history and 30 minute forecast every 10 minutes. It can help the robot to hide from the rain in time. Or don't go out at all when it's raining or there's a high probability that it will.
 
  You can run it standalone or as ROS node and use it for rain forecast on your robot. It's made for VITULUS robot, but can be run on other robots too.
 
- For map support clone [docker-mapproxy](https://github.com/lacina-dev/docker-mapproxy) and run this container.
+ For map support clone [docker-mapproxy](https://github.com/lacina-dev/docker-mapproxy) and run docker container.
 
  Follow the comments in the config/config.yaml and adjust lat, lon, etc. for your needs.
 
