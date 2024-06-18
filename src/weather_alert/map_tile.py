@@ -51,11 +51,11 @@ class MapTile:
             for tile_x in range(self.tminx, self.tmaxx + 1):
                 google_x, google_y = self.mercator.GoogleTile(tile_x, tile_y, self.zoom)
                 if self.use_map == 1:
-                    url = ('http://localhost:8082/tiles/1.0.0/osm_demo/webmercator/{}/{}/{}.png'
-                           .format(self.zoom, google_x, google_y))
+                    url = (f'http://localhost:8082/tiles/1.0.0/osm_demo/webmercator/'
+                           f'{self.zoom}/{google_x}/{google_y}.png')
                 if self.use_map == 2:
-                    url = ('http://localhost:8082/tiles/1.0.0/gm_layer/gm_grid/{}/{}/{}.png'
-                           .format(self.zoom, google_x, google_y))
+                    url = (f'http://localhost:8082/tiles/1.0.0/gm_layer/gm_grid/'
+                           f'{self.zoom}/{google_x}/{google_y}.png')
                 loading = True
                 while loading:
                     try:

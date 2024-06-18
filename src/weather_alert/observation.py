@@ -214,15 +214,8 @@ class Observation:
         zoom = self.zoom
         if self.size == 512:
             zoom = self.zoom - 1
-        url = 'https://tilecache.rainviewer.com/v2/radar{}/{}/{}/{}/{}/{}/{}_{}.png'.format(
-            self.path,
-            self.size,
-            zoom,
-            self.latitude,
-            self.longitude,
-            self.color,
-            self.smooth,
-            self.snow)
+        url = (f'https://tilecache.rainviewer.com/v2/radar{self.path}/{self.size}/{zoom}/'
+               f'{self.latitude}/{self.longitude}/{self.color}/{self.smooth}_{self.snow}.png')
         # Get image from url of Rain viewer API
         loading = True
         while loading:
@@ -298,7 +291,7 @@ class Observation:
                                       VALUES.color_deepskyblue,
                                       thickness=1)
                 cv2.putText(img_f,
-                            '{} {:.1f}%'.format(frame['frame'], percentage),
+                            f"{frame['frame']} {percentage:.1f}%",
                             (left + 2, top - 5),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.4,
