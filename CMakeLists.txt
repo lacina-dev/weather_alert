@@ -29,7 +29,6 @@ catkin_python_setup()
 add_message_files(
   FILES
   RainAlert.msg
-  WeatherForecast.msg
 )
 
 generate_messages(
