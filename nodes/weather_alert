@@ -9,6 +9,9 @@ import sys
 import signal
 import rospy
 from std_msgs.msg import String
+from sensor_msgs.msg import Image
+import cv2
+from cv_bridge import CvBridge
 from weather_alert.rainviewer import RainViewer
 from weather_alert.msg import RainAlert
 
@@ -20,8 +23,12 @@ class Node:
     def __init__(self):
         self.pub_alert = rospy.Publisher('rain_alert', RainAlert, queue_size=10, latch=True)
         self.nex_log_info_pub = rospy.Publisher('log_info', String, queue_size=10)
+        self.pub_forecast_img = rospy.Publisher('forecast_img', Image, queue_size=10, latch=True)
+        self.pub_map_img = rospy.Publisher('map_img', Image, queue_size=10, latch=True)
+        self.bridge = CvBridge()
         self.lat = None
         self.lon = None
+        self.default_location = None
         self.radar_config = None
         self.use_map = None
         self.namespace = rospy.get_namespace()
@@ -37,9 +44,9 @@ class Node:
         :return: none
         """
         config = rospy.get_param(f'{self.namespace}')
-        default_location = config['general']['default_location']
-        self.lat = float(config[default_location]['lat'])
-        self.lon = float(config[default_location]['lon'])
+        self.default_location = config['general']['default_location']
+        self.lat = float(config[self.default_location]['lat'])
+        self.lon = float(config[self.default_location]['lon'])
         self.radar_config = dict(config['radar'])
         self.use_map = int(config['general']['use_map'])
 
@@ -49,11 +56,14 @@ class Node:
 
         :return: none
         """
-        rain_alert, rain_now, rain_data = self.rain_viewer.evaluate_data()
+        img_map, img_forecast, rain_alert, rain_now, rain_data = self.rain_viewer.evaluate_data()
         msg = RainAlert()
         msg.time = rospy.Time.now()
         msg.rain_alert = rain_alert
         msg.rain_now = rain_now
+        msg.location = self.default_location
+        msg.lat = self.lat
+        msg.lon = self.lon
         msg.status_past60m = rain_data['observations'][-10]['final_status']
         msg.status_past50m = rain_data['observations'][-9]['final_status']
         msg.status_past40m = rain_data['observations'][-8]['final_status']
@@ -65,6 +75,16 @@ class Node:
         msg.status_nowcast20m = rain_data['observations'][-2]['final_status']
         msg.status_nowcast30m = rain_data['observations'][-1]['final_status']
         self.pub_alert.publish(msg)
+        
+        # Convert OpenCV image to ROS Image message and publish
+        img_forecast = cv2.cvtColor(img_forecast, cv2.COLOR_BGR2RGB) 
+        img_msg = self.bridge.cv2_to_imgmsg(img_forecast, encoding="rgb8")
+        self.pub_forecast_img.publish(img_msg)
+
+        img_map = cv2.cvtColor(img_map, cv2.COLOR_BGRA2RGBA) 
+        img_map_msg = self.bridge.cv2_to_imgmsg(img_map, encoding="rgba8")  # Changed from bgr8 to bgra8 for 8UC4 format
+        self.pub_map_img.publish(img_map_msg)
+        
         for observation in rain_data['observations'][-10:]:
 
             rospy.loginfo(f"<{rospy.get_caller_id()}> Time: {observation['time']} "

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Union, Any, Dict, Tuple
 
 import cv2
+from numpy import ndarray
 
 from weather_alert.map_tile import MapTile
 from weather_alert.observation import Observation
@@ -169,7 +170,7 @@ class RainViewer:
         return status
 
     def evaluate_data(self) -> (
-            Tuple)[bool, bool, Dict[str, Union[List[Dict[str, Any]], str, float]]]:
+            Tuple)[ndarray, ndarray, bool, bool, Dict[str, Union[List[Dict[str, Any]], str, float]]]:
         """
         Evaluate all radar observations results. Check if rain alert is needed.
         Check if rain is now.
@@ -187,7 +188,13 @@ class RainViewer:
                 rain_alert = True
         if rain_data['observations'][-4]['percent_rain'] > 0:
             rain_now = True
-        return rain_alert, rain_now, rain_data
+        # Prepare forecast images
+        observations = [self.observations[-1]] + self.nowcasts
+        result = [radar.img_annotated for radar in observations]
+        img_concatenated = cv2.hconcat(result)
+        # Prepare map image
+        img = self.observations[-1].get_img_with_map()
+        return img, img_concatenated, rain_alert, rain_now, rain_data
 
     def print_rain_status(self):
         """

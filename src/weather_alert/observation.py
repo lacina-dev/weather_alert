@@ -46,7 +46,7 @@ def add_alpha_channel(img: np.ndarray, thresh: int, max_val: int) -> np.ndarray:
     _, mask = cv2.threshold(gray, thresh, max_val, cv2.THRESH_BINARY)
     alpha_channel = cv2.bitwise_not(mask)
     bgr = cv2.split(img)
-    bgra = bgr + [alpha_channel]
+    bgra = list(bgr) + [alpha_channel]
     img_alpha = cv2.merge(bgra)
     return img_alpha
 
