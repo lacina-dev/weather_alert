@@ -6,6 +6,9 @@ Header      header
 time        time
 bool        rain_alert
 int8        rain_now
+string      location
+float32     lat
+float32     lon
 string      status_past60m
 string      status_past50m
 string      status_past40m
