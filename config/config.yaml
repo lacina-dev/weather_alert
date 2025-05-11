@@ -10,16 +10,16 @@ radar:
   frame_alert: 9
   frame_warning: 20
   # Miniumum percent of rain in frame. Value bellow will be ignored as a noise.
-  min_rain: 0
-  min_alert: 1
-  min_warning: 0.5
+  min_rain: 2.0
+  min_alert: 3.0
+  min_warning: 10.0
   snow: 0
   smooth: 1
   # Possible values 256 or 512 in px
   size: 512
   zoom: 10
   # Rain threshold 215 default (remove gray zone)
-  rain_threshold: 250
+  rain_threshold: 215
   # Color scheme values 0-8. See https://www.rainviewer.com/api/color-schemes.html
   # For threshold recommended 1
   color: 1
@@ -40,6 +40,10 @@ Graisbach_DE:
   lat: 48.7486492
   lon: 10.8969919
 
+Grenoble_FR:
+  lat: 45.1704
+  lon: 6.0
+
 Lanaja_SP:
   lat: 41.773308
   lon: -0.326232
@@ -59,3 +63,4 @@ Breda_NL:
 Dijon_FR:
   lat: 47.35233566273505
   lon: 4.950463858297299
+
