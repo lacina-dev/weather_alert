@@ -1,0 +1,17 @@
+# config.local.yaml — USER-SPECIFIC OVERRIDES
+#
+# Copy this file to config.local.yaml and edit it.
+# config.local.yaml is gitignored and will NOT be overwritten by git updates.
+#
+# Values here are merged on top of config.yaml at launch time,
+# so you only need to list the keys you want to override.
+
+general:
+  # Set your preferred location name.
+  # Use any name from config.yaml OR "Custom" (defined below).
+  default_location: "Custom"
+
+# Custom coordinates — set to your actual location.
+Custom:
+  lat: 50.0755828
+  lon: 14.4435161

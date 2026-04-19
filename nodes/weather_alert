@@ -1,10 +1,21 @@
 #!/usr/bin/env python
 """
-Weather alert node, publishing current rain status base on RainViewer API.
+Weather alert node.
+
+Publishes current rain status, a "now" map image and a horizontal forecast
+strip image based on the radar source selected in ``config/config.yaml``
+(``general.source``).
+
+Supported sources:
+  * ``rainviewer`` – global RainViewer tiles. The free public tier no longer
+    contains the ``nowcast`` block, so the forecast strip degrades to the
+    current frame only.
+  * ``chmi``       – Czech Hydrometeorological Institute open data, with a
+    real 60-min nowcast (6 × 10-min steps).
 """
 import time
 from types import FrameType
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import sys
 import signal
 import rospy
@@ -13,105 +24,213 @@ from sensor_msgs.msg import Image
 import cv2
 from cv_bridge import CvBridge
 from weather_alert.rainviewer import RainViewer
+from weather_alert.chmi import Chmi
 from weather_alert.msg import RainAlert
 
 
+def _build_source(source: str, lat: float, lon: float,
+                  radar_config: dict, use_map: int):
+    """Instantiate and return the configured radar source object."""
+    if source == "chmi":
+        return Chmi(lat, lon, radar_config, use_map)
+    return RainViewer(lat, lon, radar_config, use_map)
+
+
+def _split_observations(observations: List[Dict[str, Any]]):
+    """Split observation list into past (PAST/NOW) and nowcast lists."""
+    past = [o for o in observations if o.get('type') != 'NOWCAST']
+    nowcasts = [o for o in observations if o.get('type') == 'NOWCAST']
+    return past, nowcasts
+
+
+def _pick_by_offset(observations: List[Dict[str, Any]],
+                    reference_ts: int,
+                    offset_minutes: int,
+                    tolerance_seconds: int = 300) -> str:
+    """
+    Return ``final_status`` of the observation closest to
+    ``reference_ts + offset_minutes * 60``. Falls back to ``"UNAVAILABLE"``
+    when no observation is within ``tolerance_seconds``.
+    """
+    if not observations or reference_ts <= 0:
+        return 'UNAVAILABLE'
+    target = reference_ts + offset_minutes * 60
+    best = min(observations, key=lambda o: abs(int(o['time']) - target))
+    if abs(int(best['time']) - target) > tolerance_seconds:
+        return 'UNAVAILABLE'
+    return best.get('final_status', 'UNAVAILABLE')
+
+
 class Node:
-    """
-    ROS node for weather alert. Publishing rain status messages.
-    """
+    """ROS node for weather alert. Publishing rain status messages."""
+
     def __init__(self):
-        self.pub_alert = rospy.Publisher('rain_alert', RainAlert, queue_size=10, latch=True)
+        self.pub_alert = rospy.Publisher('rain_alert', RainAlert,
+                                         queue_size=10, latch=True)
         self.nex_log_info_pub = rospy.Publisher('log_info', String, queue_size=10)
-        self.pub_forecast_img = rospy.Publisher('forecast_img', Image, queue_size=10, latch=True)
-        self.pub_map_img = rospy.Publisher('map_img', Image, queue_size=10, latch=True)
+        self.pub_forecast_img = rospy.Publisher('forecast_img', Image,
+                                                queue_size=10, latch=True)
+        self.pub_map_img = rospy.Publisher('map_img', Image,
+                                           queue_size=10, latch=True)
         self.bridge = CvBridge()
         self.lat = None
         self.lon = None
         self.default_location = None
         self.radar_config = None
         self.use_map = None
+        self.source = 'rainviewer'
         self.namespace = rospy.get_namespace()
         self.load_params()
-        self.rain_viewer = RainViewer(self.lat, self.lon, self.radar_config, self.use_map)
-        self.rain_viewer.process_data()
+        rospy.loginfo(f"<{rospy.get_caller_id()}> "
+                      f"Using radar source: {self.source.upper()}")
+        self.radar = _build_source(self.source, self.lat, self.lon,
+                                   self.radar_config, self.use_map)
+        self.radar.process_data()
         self.publish_data()
 
     def load_params(self):
-        """
-        Load config from rosparams.
-
-        :return: none
-        """
+        """Load config from rosparams."""
         config = rospy.get_param(f'{self.namespace}')
         self.default_location = config['general']['default_location']
         self.lat = float(config[self.default_location]['lat'])
         self.lon = float(config[self.default_location]['lon'])
         self.radar_config = dict(config['radar'])
         self.use_map = int(config['general']['use_map'])
+        self.source = str(config['general'].get('source', 'rainviewer')).lower()
+
+    def _publish_image(self, publisher: rospy.Publisher, img):
+        """Publish an OpenCV image as ``sensor_msgs/Image`` (BGR or BGRA)."""
+        if img is None or img.size == 0:
+            return
+        if img.ndim == 3 and img.shape[2] == 4:
+            converted = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+            encoding = "rgba8"
+        else:
+            converted = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            encoding = "rgb8"
+        publisher.publish(self.bridge.cv2_to_imgmsg(converted, encoding=encoding))
+
+    def _populate_status_fields(self, msg: RainAlert,
+                                rain_data: Dict[str, Any]):
+        """
+        Fill ``status_pastXm`` / ``status_now`` / ``status_nowcastXm`` fields
+        by matching observations to time offsets relative to the latest NOW
+        frame. Works for both 5-min (ČHMÚ) and 10-min (RainViewer) cadence.
+        """
+        observations = rain_data.get('observations', [])
+        past, nowcasts = _split_observations(observations)
+
+        # Reference timestamp = NOW frame, fallback to last past entry.
+        now_obs = next((o for o in reversed(past) if o.get('type') == 'NOW'), None)
+        if now_obs is None and past:
+            now_obs = past[-1]
+        ref_ts = int(now_obs['time']) if now_obs else 0
+
+        msg.status_now = (now_obs.get('final_status', 'UNAVAILABLE')
+                          if now_obs else 'UNAVAILABLE')
+        msg.status_past10m = _pick_by_offset(past, ref_ts, -10)
+        msg.status_past20m = _pick_by_offset(past, ref_ts, -20)
+        msg.status_past30m = _pick_by_offset(past, ref_ts, -30)
+        msg.status_past40m = _pick_by_offset(past, ref_ts, -40)
+        msg.status_past50m = _pick_by_offset(past, ref_ts, -50)
+        msg.status_past60m = _pick_by_offset(past, ref_ts, -60)
+        # Nowcast cadence is 10 min, so allow a full step of slack between
+        # the NOW timestamp and the nowcast generation time. With the old
+        # 5-min tolerance, +10 frequently reported UNAVAILABLE even when
+        # the data was clearly present in the forecast image.
+        nowcast_tol = 600
+        msg.status_nowcast10m = _pick_by_offset(nowcasts, ref_ts, 10, nowcast_tol)
+        msg.status_nowcast20m = _pick_by_offset(nowcasts, ref_ts, 20, nowcast_tol)
+        msg.status_nowcast30m = _pick_by_offset(nowcasts, ref_ts, 30, nowcast_tol)
+
+    def _compute_alerts(self, rain_data: Dict[str, Any]):
+        """
+        Compute ``rain_now`` / ``rain_alert`` from the rain_data dict in a
+        source-agnostic way using observation ``type``.
+
+        ``rain_now`` is True when the NOW frame has rain above threshold.
+        ``rain_alert`` is True when any of the upcoming nowcast frames within
+        the next 30 min predicts rain or alert above threshold.
+        """
+        observations = rain_data.get('observations', [])
+        past, nowcasts = _split_observations(observations)
+
+        min_rain = float(self.radar_config.get('min_rain', 5.0))
+        min_alert = float(self.radar_config.get('min_alert', 10.0))
+
+        now_obs = next((o for o in reversed(past) if o.get('type') == 'NOW'), None)
+        if now_obs is None and past:
+            now_obs = past[-1]
+        rain_now_flag = bool(now_obs and now_obs.get('percent_rain', 0.0) > min_rain)
+
+        # Look at the next ≤ 30 min of nowcast frames (3 × 10-min steps).
+        rain_alert_flag = False
+        for obs in nowcasts[:3]:
+            if (obs.get('percent_rain', 0.0) > min_rain or
+                    obs.get('percent_alert', 0.0) > min_alert):
+                rain_alert_flag = True
+                break
+
+        return rain_now_flag, rain_alert_flag, now_obs
 
     def publish_data(self):
-        """
-        Publish rain status.
+        """Publish rain status and image topics."""
+        try:
+            img_map, img_forecast, _, _, rain_data = self.radar.evaluate_data()
+        except Exception as exc:
+            rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                          f"evaluate_data failed: {exc}")
+            return
 
-        :return: none
-        """
-        img_map, img_forecast, rain_alert, rain_now, rain_data = self.rain_viewer.evaluate_data()
+        rain_now_flag, rain_alert_flag, now_obs = self._compute_alerts(rain_data)
+
         msg = RainAlert()
         msg.time = rospy.Time.now()
-        msg.rain_alert = rain_alert
-        msg.rain_now = rain_now
+        msg.rain_alert = rain_alert_flag
+        msg.rain_now = 1 if rain_now_flag else 0
         msg.location = self.default_location
         msg.lat = self.lat
         msg.lon = self.lon
-        msg.status_past60m = rain_data['observations'][-10]['final_status']
-        msg.status_past50m = rain_data['observations'][-9]['final_status']
-        msg.status_past40m = rain_data['observations'][-8]['final_status']
-        msg.status_past30m = rain_data['observations'][-7]['final_status']
-        msg.status_past20m = rain_data['observations'][-6]['final_status']
-        msg.status_past10m = rain_data['observations'][-5]['final_status']
-        msg.status_now = rain_data['observations'][-4]['final_status']
-        msg.status_nowcast10m = rain_data['observations'][-3]['final_status']
-        msg.status_nowcast20m = rain_data['observations'][-2]['final_status']
-        msg.status_nowcast30m = rain_data['observations'][-1]['final_status']
+        self._populate_status_fields(msg, rain_data)
         self.pub_alert.publish(msg)
-        
-        # Convert OpenCV image to ROS Image message and publish
-        img_forecast = cv2.cvtColor(img_forecast, cv2.COLOR_BGR2RGB) 
-        img_msg = self.bridge.cv2_to_imgmsg(img_forecast, encoding="rgb8")
-        self.pub_forecast_img.publish(img_msg)
 
-        img_map = cv2.cvtColor(img_map, cv2.COLOR_BGRA2RGBA) 
-        img_map_msg = self.bridge.cv2_to_imgmsg(img_map, encoding="rgba8")  # Changed from bgr8 to bgra8 for 8UC4 format
-        self.pub_map_img.publish(img_map_msg)
-        
-        for observation in rain_data['observations'][-10:]:
+        self._publish_image(self.pub_forecast_img, img_forecast)
+        self._publish_image(self.pub_map_img, img_map)
 
-            rospy.loginfo(f"<{rospy.get_caller_id()}> Time: {observation['time']} "
-                          f"Type: {observation['type']}  Status: {observation['final_status']} "
-                          f"[{observation['percent_warn']:6.2f}% warn] "
-                          f"[{observation['percent_alert']:6.2f}% alert] "
-                          f"[{observation['percent_rain']:6.2f}% rain]")
-        if rain_alert:
+        for observation in rain_data.get('observations', [])[-12:]:
+            rospy.loginfo(
+                f"<{rospy.get_caller_id()}> Time: {observation['time']} "
+                f"Type: {observation['type']:>7}  "
+                f"Status: {observation['final_status']:>5} "
+                f"[{observation['percent_warn']:6.2f}% warn] "
+                f"[{observation['percent_alert']:6.2f}% alert] "
+                f"[{observation['percent_rain']:6.2f}% rain]")
+
+        if rain_alert_flag:
             rospy.logwarn('Rain alert!')
             self.nex_log_info_pub.publish("Rain alert!")
-        if rain_now > 0:
-            rospy.logwarn(f"Rain now {int(rain_data['observations'][-4]['percent_rain'])}%")
-            self.nex_log_info_pub.publish(
-                f"Rain now {int(rain_data['observations'][-4]['percent_rain'])}%.")
+        if rain_now_flag and now_obs is not None:
+            percent = int(now_obs.get('percent_rain', 0.0))
+            rospy.logwarn(f"Rain now {percent}%")
+            self.nex_log_info_pub.publish(f"Rain now {percent}%.")
 
     def check_for_new_data(self):
-        """
-        Check for new data from RainViewer API.
-
-        :return: none
-        """
-        result = self.rain_viewer.update_data()
+        """Re-fetch from the radar source if fresh data is available."""
+        try:
+            result = self.radar.update_data()
+        except Exception as exc:
+            rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                          f"update_data failed: {exc}")
+            return
 
         if result:
-            rospy.loginfo(f"<{rospy.get_caller_id()}> New map list received.")
-            self.rain_viewer.process_data()
-            # self.rain_viewer.print_rain_status()
+            rospy.loginfo(f"<{rospy.get_caller_id()}> New radar data received.")
+            try:
+                self.radar.process_data()
+            except Exception as exc:
+                rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                              f"process_data failed: {exc}")
+                return
             self.publish_data()
 
 
@@ -123,19 +242,14 @@ if __name__ == '__main__':
         r = rospy.Rate(0.2)  # Hz
 
         def signal_handler(signal_num: int, frame: Optional[FrameType]) -> None:
-            """
-            Handles the SIGINT signal (Ctrl+C) by shutting down
-            the ROS node and exiting the program.
-
-            :param signal_num: The signal number
-            :param frame: The current stack frame
-            :return: None
-            """
+            """Handle SIGINT/SIGTERM by shutting the ROS node down cleanly."""
             signal_name = signal.Signals(signal_num).name
-            rospy.loginfo(f"<{rospy.get_caller_id()}> Received signal {signal_num} ({signal_name})")
-            rospy.loginfo(f"<{rospy.get_caller_id()}> Shutting down weather alert node.")
+            rospy.loginfo(f"<{rospy.get_caller_id()}> "
+                          f"Received signal {signal_num} ({signal_name})")
+            rospy.loginfo(f"<{rospy.get_caller_id()}> "
+                          f"Shutting down weather alert node.")
             rospy.signal_shutdown("end")
-            time.sleep(1)  # wait for a second to ensure all log messages are written
+            time.sleep(1)
             sys.exit(0)
         signal.signal(signal.SIGINT, signal_handler)
 

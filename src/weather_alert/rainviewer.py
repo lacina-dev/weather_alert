@@ -127,8 +127,8 @@ class RainViewer:
                     observations.pop(0)
             observation_id += 1
 
-        # Radar nowcasts (forecasts)
-        for observation in self.json_data['radar']['nowcast']:
+        # Radar nowcasts (forecasts) — not available in free RainViewer tier
+        for observation in self.json_data['radar'].get('nowcast', []):
             observation_type = 'NOWCAST'
             new_observation = Observation(observation['path'],
                                           observation['time'],
@@ -143,7 +143,8 @@ class RainViewer:
             nowcasts.append(new_observation)
         self.observations = observations
         self.nowcasts = nowcasts
-        self.observations[-2].type = 'PAST'
+        if len(self.observations) >= 2:
+            self.observations[-2].type = 'PAST'
 
     def get_rain_data(self) -> Dict[str, Union[List[Dict[str, Any]], str, float]]:
         """
@@ -182,11 +183,18 @@ class RainViewer:
         rain_data = self.get_rain_data()
         rain_alert = False
         rain_now = False
-        for observation in rain_data['observations'][-4:]:
-            if observation['percent_rain'] > VALUES.RAIN_ALERT_IGNORE_PRC or \
-               observation['percent_alert'] > VALUES.RAIN_ALERT_IGNORE_PRC:
+        # for observation in rain_data['observations'][-4:]:
+        #     if observation['percent_rain'] > VALUES.RAIN_ALERT_IGNORE_PRC or \
+        #        observation['percent_alert'] > VALUES.RAIN_ALERT_IGNORE_PRC:
+        #         rain_alert = True
+        # if rain_data['observations'][-4]['percent_rain'] > VALUES.RAIN_ALERT_IGNORE_PRC:
+        #     rain_now = True
+
+        for observation in rain_data['observations'][-4:-1]:
+            if observation['percent_rain'] > self.radar_config['min_rain'] or \
+               observation['percent_alert'] > self.radar_config['min_alert']:
                 rain_alert = True
-        if rain_data['observations'][-4]['percent_rain'] > 0:
+        if rain_data['observations'][-4]['percent_rain'] > self.radar_config['min_rain']:
             rain_now = True
         # Prepare forecast images
         observations = [self.observations[-1]] + self.nowcasts
@@ -239,6 +247,8 @@ class RainViewer:
         Show now and nowcasts images for next 30 min.
         """
         observations = [self.observations[-1]] + self.nowcasts
+        if not observations:
+            return
         result = [radar.img_annotated for radar in observations]
         img_concatenated = cv2.hconcat(result)
         cv2.imshow('Now and nowcasts', img_concatenated)
