@@ -214,7 +214,7 @@ class Observation:
         zoom = self.zoom
         if self.size == 512:
             zoom = self.zoom - 1
-        url = (f'https://tilecache.rainviewer.com/v2/radar{self.path}/{self.size}/{zoom}/'
+        url = (f'https://tilecache.rainviewer.com{self.path}/{self.size}/{zoom}/'
                f'{self.latitude}/{self.longitude}/{self.color}/{self.smooth}_{self.snow}.png')
         # Get image from url of Rain viewer API
         loading = True
@@ -222,13 +222,12 @@ class Observation:
             try:
                 with urllib.request.urlopen(url) as url_image:
                     image = np.asarray(bytearray(url_image.read()), dtype="uint8")
+                self.img = cv2.imdecode(image, cv2.IMREAD_COLOR)
+                loading = False
             except (urllib.error.URLError, urllib.error.HTTPError) as error:
                 print(error)
                 print("Rain img download failed, trying again...")
                 time.sleep(10)  # Wait before retry.
-            finally:
-                self.img = cv2.imdecode(image, cv2.IMREAD_COLOR)
-                loading = False
 
     def get_rain_status(self):
         """

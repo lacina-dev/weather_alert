@@ -1,8 +1,12 @@
 general:
-  # Select location from list below
+  # Select location from list below (override locally via config.local.yaml)
   default_location: "Custom"
   # Use map as background 0: no map, 1: osm, 2: google satellite
   use_map: 1
+  # Radar data source: "rainviewer" or "chmi"
+  # rainviewer – global coverage, no API key required, free tier has no nowcast, max zoom 7
+  # chmi       – Czech Republic + neighbours, real radar + 60-min nowcast, completely free
+  source: "chmi"
 
 radar:
   # Distance in kilometers. Inner radius of the square frame.
@@ -10,29 +14,33 @@ radar:
   frame_alert: 9
   frame_warning: 20
   # Miniumum percent of rain in frame. Value bellow will be ignored as a noise.
-  min_rain: 2.0
-  min_alert: 3.0
-  min_warning: 10.0
+  min_rain: 5.0
+  min_alert: 10.0
+  min_warning: 30.0
   snow: 0
   smooth: 1
   # Possible values 256 or 512 in px
   size: 512
-  zoom: 10
-  # Rain threshold 215 default (remove gray zone)
-  rain_threshold: 215
-  # Color scheme values 0-8. See https://www.rainviewer.com/api/color-schemes.html
-  # For threshold recommended 1
+  zoom: 8  # RainViewer: API max allowed zoom is 7; code subtracts 1 for size 512
+  # Rain threshold:
+  #   RainViewer: 215 removes light grey (sub-rain echo)
+  #   ČHMÚ:       IGNORED – every ČHMÚ palette colour except the two
+  #               "no rain" shades (black=no echo, grey=below noise) is
+  #               counted as rain, so ALL rain is shown automatically.
+  rain_threshold: 100
+  # Color scheme values 0-8 (RainViewer only). See https://www.rainviewer.com/api/color-schemes.html
   color: 1
 
 
 # List of locations
 
 # In custom location you can use your own lat and lon values
+
 Custom:
   lat: 50.0755828
   lon: 14.4435161
 
-Prague:
+Prague_CZ:
   lat: 50.0755828
   lon: 14.4435161
 
@@ -64,3 +72,6 @@ Dijon_FR:
   lat: 47.35233566273505
   lon: 4.950463858297299
 
+Ostravice_CZ:
+  lat: 49.5464525
+  lon: 18.3614511

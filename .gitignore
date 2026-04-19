@@ -3,3 +3,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Local user config (coordinates, location) — not tracked by git
+config/config.local.yaml
