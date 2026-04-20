@@ -79,6 +79,7 @@ class Node:
         self.radar_config = None
         self.use_map = None
         self.source = 'rainviewer'
+        self._last_logged_generated = None
         self.namespace = rospy.get_namespace()
         self.load_params()
         rospy.loginfo(f"<{rospy.get_caller_id()}> "
@@ -197,14 +198,17 @@ class Node:
         self._publish_image(self.pub_forecast_img, img_forecast)
         self._publish_image(self.pub_map_img, img_map)
 
-        for observation in rain_data.get('observations', [])[-12:]:
-            rospy.loginfo(
-                f"<{rospy.get_caller_id()}> Time: {observation['time']} "
-                f"Type: {observation['type']:>7}  "
-                f"Status: {observation['final_status']:>5} "
-                f"[{observation['percent_warn']:6.2f}% warn] "
-                f"[{observation['percent_alert']:6.2f}% alert] "
-                f"[{observation['percent_rain']:6.2f}% rain]")
+        generated = rain_data.get('generated', 0)
+        if generated != self._last_logged_generated:
+            self._last_logged_generated = generated
+            for observation in rain_data.get('observations', [])[-12:]:
+                rospy.loginfo(
+                    f"<{rospy.get_caller_id()}> Time: {observation['time']} "
+                    f"Type: {observation['type']:>7}  "
+                    f"Status: {observation['final_status']:>5} "
+                    f"[{observation['percent_warn']:6.2f}% warn] "
+                    f"[{observation['percent_alert']:6.2f}% alert] "
+                    f"[{observation['percent_rain']:6.2f}% rain]")
 
         if rain_alert_flag:
             rospy.logwarn('Rain alert!')
