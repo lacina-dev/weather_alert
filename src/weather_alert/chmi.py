@@ -362,6 +362,39 @@ class ChmiObservation:
 
     # ── display helpers ──────────────────────────────────────────────────────
 
+    def get_rain_only_rgba(self) -> np.ndarray:
+        """
+        Return a CLEAN rain-only RGBA image (size × size) of just the radar
+        echo — NO OSM basemap, NO frame rectangles, NO status/position
+        annotations. Alpha = 255 on rain pixels (carrying the ČHMÚ palette
+        colour), alpha = 0 everywhere else (no-echo / outside coverage).
+
+        Uses ``self.img`` (the bare cropped radar, grey no-data already made
+        black), so the crop/centre/scale are IDENTICAL to the map_img path —
+        the UI geo math (half_km, centre) stays valid on both.
+
+        The channel order is RGB (+ A); the node publishes it as ``rgba8``
+        without further colour conversion, so the UI can passthrough the
+        bytes with zero palette keying.
+        """
+        size = int(self._size)
+        if self.img is None:
+            return np.zeros((size, size, 4), dtype=np.uint8)
+        radar_bgr = self.img
+        if radar_bgr.shape[:2] != (size, size):
+            radar_bgr = cv2.resize(radar_bgr, (size, size),
+                                   interpolation=cv2.INTER_NEAREST)
+        mask = _rain_mask(radar_bgr)                       # 255 where rain
+        rgb = cv2.cvtColor(radar_bgr, cv2.COLOR_BGR2RGB)
+        rgba = np.zeros((size, size, 4), dtype=np.uint8)
+        rgba[:, :, :3] = rgb
+        rgba[:, :, 3] = mask                               # alpha = rain mask
+        # Zero out the colour on transparent pixels so a sloppy UI that
+        # ignores alpha still shows black (documented no-rain background),
+        # never stray palette colours.
+        rgba[mask == 0] = (0, 0, 0, 0)
+        return rgba
+
     def get_img_with_map(self) -> np.ndarray:
         """
         Return the radar frame blended on top of the OSM background tile so
@@ -468,6 +501,12 @@ class Chmi:
         self.observations: List[ChmiObservation] = []
         self.nowcasts: List[ChmiObservation] = []
         self.generated = 0
+        # Wall-clock time of the last real fetch and the filename of the last
+        # nowcast tar we downloaded. Used to avoid re-downloading the (~675 KB)
+        # directory listings and the nowcast tar on every poll while waiting
+        # for ČHMÚ to publish the next 5-min frame.
+        self._last_fetch = 0
+        self._last_nowcast_tar = None
         # Compute the radar crop geometry ONCE so the OSM map background
         # and every observation crop share the exact same geographic
         # extent (otherwise the rain would not align with map features).
@@ -596,11 +635,16 @@ class Chmi:
             return
 
         latest_tar = tar_names[-1]
+        # The nowcast tar only changes when ČHMÚ publishes a new run. Skip the
+        # (~60 KB) download + decode when we already hold this tar.
+        if latest_tar == self._last_nowcast_tar and self.nowcasts:
+            return
         try:
             tar_data = _download_bytes(_NOWCAST_URL + latest_tar)
         except Exception as exc:
             print(f"ČHMÚ: cannot download nowcast tar: {exc}")
             return
+        self._last_nowcast_tar = latest_tar
 
         nowcasts: List[ChmiObservation] = []
         try:
@@ -620,24 +664,63 @@ class Chmi:
 
         self.nowcasts = nowcasts
 
+    def get_rain_only_rgba(self) -> np.ndarray:
+        """
+        Return the CLEAN rain-only RGBA image (no OSM, no annotations) for the
+        latest NOW frame. Same 512×512 crop/centre/scale as ``get_img_with_map``
+        (i.e. as map_img), so the UI geo math stays valid.
+        """
+        size = int(self.radar_config.get('size', 512))
+        if not self.observations:
+            return np.zeros((size, size, 4), dtype=np.uint8)
+        return self.observations[-1].get_rain_only_rgba()
+
+    def get_rain_meta(self) -> Dict[str, Any]:
+        """
+        Return the geographic extent of the rain_img / map_img crop so the UI
+        stops re-deriving ČHMÚ constants. ``half_km`` is the half-side of the
+        square crop in km; the full frame spans ``2 * half_km`` km centred on
+        (center_lat, center_lon). Also carries the size in px and the km/px
+        scale of the resized image.
+        """
+        size = int(self.radar_config.get('size', 512))
+        half_km = float(self._half_km)
+        return {
+            'center_lat':  self.latitude,
+            'center_lon':  self.longitude,
+            'half_km':     half_km,
+            'size_px':     size,
+            'km_per_px':   (2.0 * half_km) / float(size) if size else 0.0,
+            'frame_warning_km': float(self.radar_config.get('frame_warning', 20)),
+        }
+
     def process_data(self):
         """Alias kept for interface compatibility with RainViewer."""
         self.get_map_data()
 
     def update_data(self) -> bool:
         """
-        Re-fetch if current data is older than ~5 minutes.
+        Re-fetch at most once per ~5 minutes (ČHMÚ's publish cadence).
 
-        :return: True if fresh data was fetched.
+        The gate is on wall-clock time since our last fetch, NOT on the radar
+        data timestamp: ČHMÚ frames carry several minutes of processing
+        latency, so the newest available frame is normally already >5 min old.
+        Gating on data age therefore fired on every poll, re-downloading the
+        full directory listings (~675 KB) every few seconds while waiting for
+        the next frame to appear.
+
+        :return: True if a genuinely newer frame was fetched.
         """
         if not self.observations:
             self.get_map_data()
+            self._last_fetch = int(time.time())
             return True
-        age = int(time.time()) - self.generated
-        if age > 310:
-            self.get_map_data()
-            return True
-        return False
+        if int(time.time()) - self._last_fetch < 300:
+            return False
+        before = self.generated
+        self.get_map_data()
+        self._last_fetch = int(time.time())
+        return self.generated != before
 
     def get_rain_data(self) -> Dict[str, Union[List[Dict[str, Any]], str, float]]:
         """Return observations summary dict (same structure as RainViewer)."""

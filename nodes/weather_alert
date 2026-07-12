@@ -13,6 +13,7 @@ Supported sources:
   * ``chmi``       – Czech Hydrometeorological Institute open data, with a
     real 60-min nowcast (6 × 10-min steps).
 """
+import json
 import time
 from types import FrameType
 from typing import Optional, List, Dict, Any
@@ -72,6 +73,16 @@ class Node:
                                                 queue_size=10, latch=True)
         self.pub_map_img = rospy.Publisher('map_img', Image,
                                            queue_size=10, latch=True)
+        # CLEAN rain-only radar image (rgba8): NO OSM basemap, NO annotations,
+        # NO frame rectangles / position marker — just the ČHMÚ radar echo with
+        # alpha=255 on rain pixels (palette colour) and alpha=0 elsewhere. Same
+        # 512×512 crop/centre/scale as map_img, so the UI geo math is shared.
+        self.pub_rain_img = rospy.Publisher('rain_img', Image,
+                                            queue_size=10, latch=True)
+        # Companion latched JSON with the actual crop extent (half_km, centre
+        # lat/lon, km/px) so the UI stops re-deriving ČHMÚ constants.
+        self.pub_rain_meta = rospy.Publisher('rain_meta', String,
+                                             queue_size=10, latch=True)
         self.bridge = CvBridge()
         self.lat = None
         self.lon = None
@@ -110,6 +121,41 @@ class Node:
             converted = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             encoding = "rgb8"
         publisher.publish(self.bridge.cv2_to_imgmsg(converted, encoding=encoding))
+
+    def _publish_rain_only(self):
+        """
+        Publish the CLEAN rain-only radar image (rgba8) and its geo-meta JSON.
+        Only radar sources exposing ``get_rain_only_rgba`` (currently ČHMÚ)
+        provide it; others are skipped silently so map_img is unaffected.
+
+        The RGBA array is already in RGB(A) channel order (chmi.py converts
+        BGR→RGB before packing alpha), so we pass it through as ``rgba8``
+        WITHOUT any colour conversion — the UI can consume the bytes with no
+        palette keying at all.
+        """
+        if not hasattr(self.radar, 'get_rain_only_rgba'):
+            return
+        try:
+            rgba = self.radar.get_rain_only_rgba()
+        except Exception as exc:
+            rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                          f"get_rain_only_rgba failed: {exc}")
+            return
+        if rgba is not None and rgba.size > 0:
+            try:
+                self.pub_rain_img.publish(
+                    self.bridge.cv2_to_imgmsg(rgba, encoding="rgba8"))
+            except Exception as exc:
+                rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                              f"rain_img publish failed: {exc}")
+
+        if hasattr(self.radar, 'get_rain_meta'):
+            try:
+                meta = self.radar.get_rain_meta()
+                self.pub_rain_meta.publish(json.dumps(meta))
+            except Exception as exc:
+                rospy.logwarn(f"<{rospy.get_caller_id()}> "
+                              f"rain_meta publish failed: {exc}")
 
     def _populate_status_fields(self, msg: RainAlert,
                                 rain_data: Dict[str, Any]):
@@ -197,6 +243,7 @@ class Node:
 
         self._publish_image(self.pub_forecast_img, img_forecast)
         self._publish_image(self.pub_map_img, img_map)
+        self._publish_rain_only()
 
         generated = rain_data.get('generated', 0)
         if generated != self._last_logged_generated:
@@ -243,7 +290,7 @@ if __name__ == '__main__':
         rospy.init_node('weather_alert_node')
         rospy.loginfo(f"<{rospy.get_caller_id()}> Initialising...")
         node = Node()
-        r = rospy.Rate(0.2)  # Hz
+        r = rospy.Rate(1.0 / 60.0)  # Hz — poll once per minute (ČHMÚ updates every 5 min)
 
         def signal_handler(signal_num: int, frame: Optional[FrameType]) -> None:
             """Handle SIGINT/SIGTERM by shutting the ROS node down cleanly."""
