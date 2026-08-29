@@ -47,7 +47,7 @@ def main():
     radar.show_now_and_forecast()
     radar.show_images()
 
-    check_interval = 20
+    check_interval = 60
     while True:
         result = radar.update_data()
         if result:
