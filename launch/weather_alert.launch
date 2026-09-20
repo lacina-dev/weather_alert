@@ -2,15 +2,17 @@
 
     <arg name="arg_ns" default="weather_alert"/>
 
-    <!-- Local config overrides (gitignored). Loaded after config.yaml so it
-         wins on any key present in both files.
-         If config.local.yaml does not exist, copy config.local.example.yaml to create it. -->
+    <!-- Local config overrides (gitignored). OPTIONAL: the node itself merges
+         this file on top of config.yaml when it exists (roslaunch would abort
+         the whole launch on a missing rosparam file, and a fresh clone has no
+         config.local.yaml). It wins on any key present in both files.
+         To create it, copy config.local.example.yaml and set your location. -->
     <arg name="local_config" default="$(find weather_alert)/config/config.local.yaml"/>
 
     <group ns="$(arg arg_ns)">
         <rosparam command="load" file="$(find weather_alert)/config/config.yaml" />
-        <rosparam command="load" file="$(arg local_config)" />
         <node name="weather_alert" pkg="weather_alert" type="weather_alert" respawn="true" respawn_delay="10" output="screen">
+            <param name="local_config" value="$(arg local_config)" />
             <remap from="log_info" to="/nextion/log_info" />
         </node>
     </group>

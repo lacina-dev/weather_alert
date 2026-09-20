@@ -14,6 +14,7 @@ Supported sources:
     real 60-min nowcast (6 × 10-min steps).
 """
 import json
+import os
 import time
 from types import FrameType
 from typing import Optional, List, Dict, Any
@@ -23,6 +24,7 @@ import rospy
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 import cv2
+import yaml
 from cv_bridge import CvBridge
 from weather_alert.rainviewer import RainViewer
 from weather_alert.chmi import Chmi
@@ -35,6 +37,16 @@ def _build_source(source: str, lat: float, lon: float,
     if source == "chmi":
         return Chmi(lat, lon, radar_config, use_map)
     return RainViewer(lat, lon, radar_config, use_map)
+
+
+def _merge_config(base: dict, override: dict) -> dict:
+    """Recursively merge ``override`` into ``base`` (override wins)."""
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge_config(base[key], value)
+        else:
+            base[key] = value
+    return base
 
 
 def _split_observations(observations: List[Dict[str, Any]]):
@@ -103,12 +115,49 @@ class Node:
     def load_params(self):
         """Load config from rosparams."""
         config = rospy.get_param(f'{self.namespace}')
+        self._merge_local_config(config)
         self.default_location = config['general']['default_location']
+        if not isinstance(config.get(self.default_location), dict):
+            raise KeyError(f"weather_alert: location '{self.default_location}' "
+                           f"(general/default_location) is not defined in the config")
         self.lat = float(config[self.default_location]['lat'])
         self.lon = float(config[self.default_location]['lon'])
+        # config.local.example.yaml ships these coordinates (Prague) as "Custom";
+        # the build copies the example, so an unedited install lands here.
+        if (self.default_location == 'Custom'
+                and abs(self.lat - 50.0755828) < 1e-6 and abs(self.lon - 14.4435161) < 1e-6):
+            rospy.logwarn(f"<{rospy.get_caller_id()}> Location is still the shipped "
+                          f"placeholder (Prague). Set your coordinates in "
+                          f"config/config.local.yaml, otherwise rain alerts are not for your site.")
         self.radar_config = dict(config['radar'])
         self.use_map = int(config['general']['use_map'])
         self.source = str(config['general'].get('source', 'rainviewer')).lower()
+
+    def _merge_local_config(self, config: dict):
+        """Merge the optional, gitignored config.local.yaml over the rosparams.
+
+        The file is optional so that a fresh clone boots: without it the node
+        runs with the tracked defaults from config.yaml (placeholder location).
+        """
+        path = rospy.get_param('~local_config', '')
+        if not path:
+            return
+        if not os.path.isfile(path):
+            rospy.logwarn(f"<{rospy.get_caller_id()}> No local config ({path}): "
+                          f"using the DEFAULT location from config.yaml - rain alerts "
+                          f"are NOT for your site. Copy config.local.example.yaml to "
+                          f"config.local.yaml and set your coordinates.")
+            return
+        try:
+            with open(path, 'r') as file:
+                local = yaml.safe_load(file) or {}
+            if not isinstance(local, dict):
+                raise ValueError("top level is not a mapping")
+            _merge_config(config, local)
+            rospy.loginfo(f"<{rospy.get_caller_id()}> Local config merged: {path}")
+        except Exception as exc:  # broken override must not kill the node
+            rospy.logerr(f"<{rospy.get_caller_id()}> Local config {path} ignored "
+                         f"({exc}); using config.yaml only.")
 
     def _publish_image(self, publisher: rospy.Publisher, img):
         """Publish an OpenCV image as ``sensor_msgs/Image`` (BGR or BGRA)."""

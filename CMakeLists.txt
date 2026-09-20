@@ -78,8 +78,8 @@ include_directories(
 ################################################################################
 
 # Auto-create config.local.yaml from example if it does not exist.
-# This ensures the launch file can always load it; the file is gitignored so
-# user edits are never overwritten by git pull.
+# Convenience only (the node treats the file as optional); the file is
+# gitignored so user edits are never overwritten by git pull.
 set(LOCAL_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/config/config.local.yaml")
 set(EXAMPLE_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/config/config.local.example.yaml")
 if(NOT EXISTS "${LOCAL_CONFIG}")
@@ -89,7 +89,7 @@ if(NOT EXISTS "${LOCAL_CONFIG}")
   message(STATUS "weather_alert: created config.local.yaml from example")
 endif()
 
-install(DIRECTORY launch config rviz
+install(DIRECTORY launch config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
