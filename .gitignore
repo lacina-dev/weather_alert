@@ -12,7 +12,8 @@ __pycache__/
 *~
 
 # Local user config (coordinates, location) — not tracked by git
-config/config.local.yaml*.bak_*
+config/config.local.yaml
+*.bak_*
 *_bak_*
 *.orig
 .claude/
