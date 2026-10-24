@@ -11,7 +11,7 @@
 
     <group ns="$(arg arg_ns)">
         <rosparam command="load" file="$(find weather_alert)/config/config.yaml" />
-        <node name="weather_alert" pkg="weather_alert" type="weather_alert" respawn="true" respawn_delay="10" output="screen">
+        <node name="weather_alert" pkg="weather_alert" type="weather_alert" respawn="true" respawn_delay="10" output="log">
             <param name="local_config" value="$(arg local_config)" />
             <remap from="log_info" to="/nextion/log_info" />
         </node>
