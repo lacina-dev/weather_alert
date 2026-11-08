@@ -29,7 +29,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Union
 
 import cv2
@@ -169,7 +169,9 @@ def _parse_timestamp_from_name(filename: str) -> int:
     m = re.search(r'\.(\d{8})\.(\d{4})\.', filename)
     if not m:
         return 0
-    dt = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M")
+    # The name is UTC: a naive datetime would be read as local time
+    # (Europe/Prague), shifting every frame by 1-2 h.
+    dt = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
     return int(dt.timestamp())
 
 

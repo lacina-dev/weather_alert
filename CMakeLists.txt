@@ -95,6 +95,7 @@ install(DIRECTORY launch config
 
 catkin_install_python(PROGRAMS
   nodes/weather_alert
+  nodes/weather_openmeteo
   scripts/main.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

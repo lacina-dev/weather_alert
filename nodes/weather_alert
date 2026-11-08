@@ -29,6 +29,7 @@ from cv_bridge import CvBridge
 from weather_alert.rainviewer import RainViewer
 from weather_alert.chmi import Chmi
 from weather_alert.msg import RainAlert
+from weather_alert.radar_log import RadarLog, sample_from
 
 
 def _build_source(source: str, lat: float, lon: float,
@@ -104,6 +105,8 @@ class Node:
         self.source = 'rainviewer'
         self._last_logged_generated = None
         self.namespace = rospy.get_namespace()
+        # Permanent radar record (~/.vitulus/weather/radar), see radar_log.py
+        self.radar_log = RadarLog()
         self.load_params()
         rospy.loginfo(f"<{rospy.get_caller_id()}> "
                       f"Using radar source: {self.source.upper()}")
@@ -289,6 +292,7 @@ class Node:
         msg.lon = self.lon
         self._populate_status_fields(msg, rain_data)
         self.pub_alert.publish(msg)
+        self._record(rain_data, rain_now_flag, rain_alert_flag)
 
         self._publish_image(self.pub_forecast_img, img_forecast)
         self._publish_image(self.pub_map_img, img_map)
@@ -313,6 +317,14 @@ class Node:
             percent = int(now_obs.get('percent_rain', 0.0))
             rospy.logwarn(f"Rain now {percent}%")
             self.nex_log_info_pub.publish(f"Rain now {percent}%.")
+
+    def _record(self, rain_data, rain_now_flag, rain_alert_flag):
+        """Store the published radar status; a disk problem never stops alerts."""
+        try:
+            self.radar_log.record(sample_from(rain_data, rain_now_flag, rain_alert_flag))
+        except Exception as exc:
+            rospy.logwarn_throttle(600, f"<{rospy.get_caller_id()}> "
+                                   f"radar record failed: {exc}")
 
     def check_for_new_data(self):
         """Re-fetch from the radar source if fresh data is available."""

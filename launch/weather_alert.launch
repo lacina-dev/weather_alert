@@ -17,4 +17,10 @@
         </node>
     </group>
 
+    <!-- Open-Meteo forecast + history (/weather/forecast, /weather/history, /weather/summary) -->
+    <include file="$(find weather_alert)/launch/weather_openmeteo.launch">
+        <arg name="arg_ns" value="$(arg arg_ns)"/>
+        <arg name="local_config" value="$(arg local_config)"/>
+    </include>
+
 </launch>

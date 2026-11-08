@@ -1,0 +1,23 @@
+<launch>
+    <!-- Open-Meteo forecast + history for the served site (weather_alert/openmeteo.py).
+         Publishes latched JSON /weather/forecast, /weather/history, /weather/summary.
+         Data on disk: ~/.vitulus/weather/openmeteo. Included by weather_alert.launch,
+         which loads the location config into /<arg_ns>; this file does NOT load
+         config.yaml again (location = site datum first, then those params).
+         Started alone (outside the stack) use respawn:=false: the stack's
+         instance, when it comes, takes the name over and this one stays down
+         instead of the two kicking each other out. -->
+    <arg name="arg_ns" default="weather_alert"/>
+    <arg name="local_config" default="$(find weather_alert)/config/config.local.yaml"/>
+    <arg name="respawn" default="true"/>
+
+    <group ns="$(arg arg_ns)">
+        <node name="weather_openmeteo" pkg="weather_alert" type="weather_openmeteo" respawn="$(arg respawn)" respawn_delay="30" output="log">
+            <param name="local_config" value="$(arg local_config)" />
+            <param name="interval_s" value="3600" />
+            <param name="retry_s" value="600" />
+            <param name="history_days" value="30" />
+            <param name="forecast_hours" value="48" />
+        </node>
+    </group>
+</launch>

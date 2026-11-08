@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Open-Meteo forecast + history for the robot's site.
+
+Every ``~interval_s`` (1 h) fetches the hourly forecast and the last days of
+hourly history, stores them under ~/.vitulus/weather/openmeteo (see
+weather_alert/openmeteo.py) and publishes latched JSON:
+
+  /weather/forecast   next ``~forecast_hours`` h hourly + daily, age, stale flag
+  /weather/history    per day Open-Meteo + radar summaries (last ``~history_days``)
+  /weather/summary    weather_alert.history.summary() - the decision input
+
+Without network nothing fails: the last stored data stay published, with
+their age (``age_s``/``stale``) and ``last_error``; retried every ``~retry_s``.
+Location = datum of the served site (~/.vitulus/mapping_v3), fallback the
+weather_alert location config.
+"""
+import json
+import os
+import time
+
+import rospy
+import yaml
+from std_msgs.msg import String
+
+from weather_alert import history, openmeteo, storage
+
+
+def _merge(base, override):
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+class Node(object):
+    def __init__(self):
+        self.interval_s = float(rospy.get_param('~interval_s', 3600))
+        self.retry_s = float(rospy.get_param('~retry_s', 600))
+        self.history_days = int(rospy.get_param('~history_days', 30))
+        self.forecast_hours = int(rospy.get_param('~forecast_hours', 48))
+        self.timeout = float(rospy.get_param('~timeout', 20.0))
+        self.republish_s = float(rospy.get_param('~republish_s', 300))
+        self.store = openmeteo.OpenMeteoStore()
+        self.pub_forecast = rospy.Publisher('/weather/forecast', String, queue_size=1, latch=True)
+        self.pub_history = rospy.Publisher('/weather/history', String, queue_size=1, latch=True)
+        self.pub_summary = rospy.Publisher('/weather/summary', String, queue_size=1, latch=True)
+        self.last_attempt = 0.0
+        self.last_publish = 0.0
+        self.last_ok = False
+        # a restart (respawn) does not re-download within the interval -
+        # unless the stored answer is missing or broken
+        status = self.store.status()
+        last = float(status.get('last_success') or 0)
+        if self.store.latest() is not None and 0 < time.time() - last < self.interval_s:
+            self.last_attempt, self.last_ok = last, True
+
+    def location(self):
+        site = storage.site_location()
+        if site:
+            return site
+        config = rospy.get_param(rospy.get_namespace(), {}) or {}
+        path = rospy.get_param('~local_config', '')
+        if path and os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    _merge(config, yaml.safe_load(f) or {})
+            except (OSError, yaml.YAMLError) as exc:
+                rospy.logwarn('weather_openmeteo: %s ignored (%s)', path, exc)
+        try:
+            name = config['general']['default_location']
+            return float(config[name]['lat']), float(config[name]['lon']), None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def fetch(self, now):
+        self.last_attempt = now
+        loc = self.location()
+        if not loc:
+            self.store.set_status(False, now, 'no location (no site datum, no config)')
+            rospy.logwarn_throttle(3600, 'weather_openmeteo: no location')
+            return False
+        lat, lon, site = loc
+        today = storage.local_date(now)
+        missing = self.store.missing_days(today, self.history_days)
+        # backfill the whole window once, then just refresh yesterday + today
+        past_days = min(92, self.history_days if len(missing) > 1 else 2)
+        try:
+            payload = openmeteo.fetch(lat, lon, past_days=past_days,
+                                      forecast_days=max(2, self.forecast_hours // 24 + 1),
+                                      timeout=self.timeout)
+            self.store.save(payload, now, lat, lon, site)
+        except Exception as exc:  # network, API, disk: keep the old data
+            self.store.set_status(False, now, exc)
+            rospy.logwarn_throttle(3600, 'weather_openmeteo: fetch failed, keeping '
+                                   'last data: %s', exc)
+            return False
+        rospy.loginfo('weather_openmeteo: %.5f,%.5f (%s) past_days=%d saved',
+                      lat, lon, site or 'config', past_days)
+        return True
+
+    def publish(self, now):
+        self.last_publish = now
+        try:
+            fc = openmeteo.forecast_view(self.store.latest(), now, self.forecast_hours,
+                                         status=self.store.status())
+            self.pub_forecast.publish(String(json.dumps(fc, sort_keys=True, default=str)))
+            self.pub_history.publish(String(json.dumps(
+                history.history(now, days=self.history_days), sort_keys=True, default=str)))
+            self.pub_summary.publish(String(json.dumps(
+                history.summary(now), sort_keys=True, default=str)))
+        except Exception as exc:
+            rospy.logwarn_throttle(600, 'weather_openmeteo: publish failed: %s', exc)
+
+    def spin(self):
+        self.publish(time.time())  # what is on disk, right away
+        rate = rospy.Rate(1.0 / 30.0)
+        while not rospy.is_shutdown():
+            now = time.time()
+            wait = self.interval_s if self.last_ok else self.retry_s
+            if now - self.last_attempt >= wait:
+                self.last_ok = self.fetch(now)
+                self.publish(now)
+            elif now - self.last_publish >= self.republish_s:
+                self.publish(now)  # refreshed age / radar part of summary
+            try:
+                rate.sleep()
+            except rospy.ROSInterruptException:
+                break
+
+
+if __name__ == '__main__':
+    rospy.init_node('weather_openmeteo')
+    Node().spin()
