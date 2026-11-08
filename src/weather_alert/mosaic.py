@@ -23,8 +23,12 @@ image is black where it is dry and coloured where the rate is at least
 ``mosaic.rain_mmh``. The published topics therefore keep their format.
 
 Unknown is never reported as dry:
-  * service unreachable / error → nothing new is published (the last
-    RainAlert gets old, which the mower treats as "no weather data");
+  * service unreachable / error with frames already held → nothing new is
+    published (the last RainAlert gets old, which the mower treats as "no
+    weather data") — as the ČHMÚ source does;
+  * no frame at all (service down since the start, point outside the area) →
+    every poll publishes a RainAlert with every status ``UNAVAILABLE`` and
+    ``rain_now 0``, exactly what the ČHMÚ source publishes without data (T22);
   * a frame without radar coverage (or stale data) at the robot has status
     ``UNAVAILABLE``; when that is the NOW frame, no RainAlert is published.
 """
@@ -382,9 +386,12 @@ class Mosaic(Chmi):
         """
         Ask the service at most every ``poll_s`` seconds.
 
-        :return: True only when a new observed frame arrived. While the
-                 service is down nothing new is published, so the last
-                 RainAlert ages (= no weather data) instead of turning dry.
+        :return: True when a new observed frame arrived, and (as the ČHMÚ
+                 source) at every poll while no frame is held at all: the
+                 node then publishes the UNAVAILABLE RainAlert. While the
+                 service is down with frames held nothing new is published,
+                 so the last RainAlert ages (= no weather data) instead of
+                 turning dry.
         """
         now = time.time()
         # the node's loop also runs every 60 s: with the plain "< poll_s" a
@@ -393,6 +400,13 @@ class Mosaic(Chmi):
         if now - self._last_check < max(0.0, self.poll_s - POLL_SLACK_S):
             return False
         self._last_check = now
+        if not self.observations:
+            # T22: like Chmi.update_data without data — fetch, and report
+            # "something to publish" either way; process_data must not ask
+            # the (maybe dead) service a second time right after.
+            self.get_map_data()
+            self._prefetched = True
+            return True
         if self.observations:
             # /index.json costs ~1 ms on the service, /point ~0.25 s: ask the
             # cheap one whether a new frame exists before the full refresh.
@@ -410,12 +424,16 @@ class Mosaic(Chmi):
 
     def evaluate_data(self):
         """
-        :return: (img_map, img_forecast, rain_alert, rain_now, rain_data)
-        :raises MosaicError: no frame yet, or no radar coverage at the robot
-                 in the NOW frame – the node then publishes nothing.
+        :return: (img_map, img_forecast, rain_alert, rain_now, rain_data);
+                 without any frame (T22) the empty result of the ČHMÚ source:
+                 no observations, so the node publishes every status
+                 UNAVAILABLE with rain_now 0 and rain_alert False.
+        :raises MosaicError: no radar coverage at the robot in the NOW frame
+                 – the node then publishes nothing.
         """
         if not self.observations:
-            raise MosaicError(f"no precip-mosaic data yet ({self.last_error})")
+            return (np.zeros((100, 100, 3), np.uint8), self._forecast_grid(),
+                    False, False, self.get_rain_data())
         now_obs = self.observations[-1]
         if not now_obs.available:
             raise MosaicError(f"no radar coverage at the robot in frame {now_obs.frame_id} "

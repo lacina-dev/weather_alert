@@ -19,8 +19,10 @@
     section (`url`, `timeout_s`, `poll_s`, `rain_mmh` rain threshold in mm/h, `half_km`, …).
     The node asks `/point` for the time line and `/area.png` (`style=data` for the evaluation,
     `style=rate` for the pictures, nowcast as `frame=nowcast+N`); the 1/9/20 km frames are evaluated
-    here, exactly as for `chmi`, so all topics keep their format. When the service is down nothing
-    new is published (the last `rain_alert` gets old); a frame without radar coverage at the robot
+    here, exactly as for `chmi`, so all topics keep their format. When the service goes down after
+    frames arrived nothing new is published (the last `rain_alert` gets old), as with `chmi`; with no
+    frame at all (down since the start) every poll publishes `rain_alert` with every status
+    `UNAVAILABLE` and `rain_now 0`, as `chmi` does without data. A frame without radar coverage at the robot
     has status `UNAVAILABLE`, and without coverage in the NOW frame no `rain_alert` is published.
     Test offline: `python3 test/test_mosaic.py`.
 

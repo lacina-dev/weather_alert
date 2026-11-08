@@ -398,8 +398,10 @@ class Unknown(Base):
         m = self.source()
         self.assertEqual(m.observations, [])
         self.assertIn('outside the configured area', m.last_error)
-        with self.assertRaises(MosaicError):
-            m.evaluate_data()
+        # T22: no frame at all = the ČHMÚ source without data: an empty result
+        # (the node publishes every status UNAVAILABLE, rain_now 0)
+        _, _, rain_alert, rain_now, rain_data = m.evaluate_data()
+        self.assertEqual((rain_alert, rain_now, rain_data['observations']), (False, False, []))
 
     def test_timeline_moved_changes_nothing(self):
         m = self.source()
@@ -421,9 +423,16 @@ class Outage(unittest.TestCase):
         m.process_data()
         self.assertEqual((m.observations, m.nowcasts), ([], []))
         self.assertTrue(m.last_error)
-        with self.assertRaises(MosaicError):
-            m.evaluate_data()
+        # T22: as the ČHMÚ source without data — every poll has something to
+        # publish (the UNAVAILABLE RainAlert), the result is empty, not dry
+        _, _, rain_alert, rain_now, rain_data = m.evaluate_data()
+        self.assertEqual((rain_alert, rain_now, rain_data['observations']), (False, False, []))
         m._last_check = 0
+        self.assertTrue(m.update_data())
+        self.assertTrue(m._prefetched)        # process_data won't ask the dead service again
+        m.process_data()
+        self.assertFalse(m._prefetched)
+        m._last_check = time.time()           # within poll_s: nothing, no request
         self.assertFalse(m.update_data())
         self.assertLess(time.time() - t, 5)
         # the service comes up: next poll fetches and reports new data once
@@ -476,6 +485,105 @@ class Outage(unittest.TestCase):
         finally:
             sc.delay_s = 0
             svc.stop()
+
+
+def _load_node():
+    """nodes/weather_alert with rospy, messages and cv_bridge stubbed (no ROS)."""
+    import importlib.machinery
+    import importlib.util
+    import types
+
+    class _Msg(object):
+        def __init__(self, *a, **kw):
+            pass
+
+    stubs = {}
+    rospy = types.ModuleType('rospy')
+    rospy.Time = type('Time', (), {'now': staticmethod(lambda: 0)})
+    rospy.get_caller_id = lambda: '/weather_alert_test'
+    rospy.Publisher = _Msg
+    for name in ('loginfo', 'logwarn', 'logerr', 'logwarn_throttle'):
+        setattr(rospy, name, lambda *a, **kw: None)
+    stubs['rospy'] = rospy
+    for mod, names in (('std_msgs.msg', ('String',)), ('sensor_msgs.msg', ('Image',)),
+                       ('weather_alert.msg', ('RainAlert',))):
+        m = types.ModuleType(mod)
+        for n in names:
+            setattr(m, n, type(n, (_Msg,), {}))
+        stubs[mod] = m
+    stubs.setdefault('std_msgs', types.ModuleType('std_msgs'))
+    stubs.setdefault('sensor_msgs', types.ModuleType('sensor_msgs'))
+    cvb = types.ModuleType('cv_bridge')
+    cvb.CvBridge = type('CvBridge', (), {'cv2_to_imgmsg': lambda self, img, encoding='': img})
+    stubs['cv_bridge'] = cvb
+    saved = {k: sys.modules.get(k) for k in stubs}
+    sys.modules.update(stubs)
+    try:
+        loader = importlib.machinery.SourceFileLoader(
+            'weather_alert_node_under_test', os.path.join(_PKG, 'nodes', 'weather_alert'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        node = importlib.util.module_from_spec(spec)
+        loader.exec_module(node)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    return node
+
+
+class _Rec(object):
+    def __init__(self):
+        self.msgs = []
+
+    def publish(self, msg):
+        self.msgs.append(msg)
+
+
+class NodeWithoutData(unittest.TestCase):
+    """T22: what the node really publishes from a source without any frame —
+    mosaic with its service down behaves as ČHMÚ without data."""
+
+    def publish(self, source):
+        node_mod = _load_node()
+        node = node_mod.Node.__new__(node_mod.Node)
+        node.radar = source
+        node.radar_config = dict(RADAR)
+        node.default_location = 'test'
+        node.lat, node.lon = PRAHA
+        node.bridge = node_mod.CvBridge()
+        node.radar_log = type('Log', (), {'record': lambda self, s: bool(s)})()
+        node._last_logged_generated = None
+        for name in ('pub_alert', 'nex_log_info_pub', 'pub_forecast_img', 'pub_map_img',
+                     'pub_rain_img', 'pub_rain_meta'):
+            setattr(node, name, _Rec())
+        node.publish_data()
+        return node.pub_alert.msgs
+
+    def test_mosaic_down_publishes_unavailable(self):
+        m = Mosaic(PRAHA[0], PRAHA[1], dict(RADAR), 0,
+                   {'url': 'http://127.0.0.1:%d' % free_port(), 'timeout_s': 2})
+        m.process_data()
+        msgs = self.publish(m)
+        self.assertEqual(len(msgs), 1)
+        msg = msgs[0]
+        self.assertEqual((msg.rain_now, msg.rain_alert), (0, False))
+        fields = ['status_now'] + ['status_past%dm' % k for k in (10, 20, 30, 40, 50, 60)] \
+            + ['status_nowcast%dm' % k for k in (10, 20, 30)]
+        self.assertEqual({getattr(msg, f) for f in fields}, {STATUS_UNAVAILABLE})
+
+    def test_same_as_chmi_without_data(self):
+        chmi = Chmi.__new__(Chmi)      # no network: only the empty state matters
+        chmi.latitude, chmi.longitude = PRAHA
+        chmi.radar_config = dict(RADAR)
+        chmi.observations, chmi.nowcasts, chmi.generated = [], [], 0
+        m = Mosaic(PRAHA[0], PRAHA[1], dict(RADAR), 0,
+                   {'url': 'http://127.0.0.1:%d' % free_port(), 'timeout_s': 2})
+        m.process_data()
+        keys = ('rain_now', 'rain_alert', 'status_now', 'status_past10m', 'status_nowcast30m')
+        a, b = self.publish(chmi)[0], self.publish(m)[0]
+        self.assertEqual([getattr(a, k) for k in keys], [getattr(b, k) for k in keys])
 
 
 class Polling(Base):

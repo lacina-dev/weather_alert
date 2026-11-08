@@ -19,6 +19,7 @@ rain time. No rospy.
 import datetime as dt
 import json
 import os
+import threading
 import time
 
 from weather_alert import storage
@@ -28,6 +29,14 @@ NOWCAST_OFFSETS = (10, 20, 30)
 #: one ČHMÚ frame stands for 5 minutes; a gap longer than this is "no data"
 FRAME_MIN = 5.0
 MAX_GAP_MIN = 10.0
+
+#: T22 (N8): parsed day files, path -> (mtime_ns, size, samples). summary()
+#: reads up to 30 days of frames, most of them several times per call; a
+#: day file only grows, so a file with the same mtime and size is the same.
+#: Measured on a 30-day copy: 260 ms -> ~10 ms per summary() (notebook).
+_DAY_CACHE = {}
+_DAY_CACHE_MAX = 64
+_DAY_LOCK = threading.Lock()
 
 
 def _r1(value):
@@ -136,9 +145,30 @@ class RadarLog(object):
         return os.path.join(self.dir, 'daily.json')
 
     def read_day(self, day):
+        """Samples of one day file (a list of its own; the samples must not
+        be changed by the caller, they are shared with the cache)."""
+        path = self.day_path(day)
+        try:
+            st = os.stat(path)
+        except OSError:
+            return []
+        key = (st.st_mtime_ns, st.st_size)
+        with _DAY_LOCK:
+            hit = _DAY_CACHE.get(path)
+        if hit is not None and hit[0] == key:
+            return list(hit[1])
+        out = self._parse_day(path)
+        with _DAY_LOCK:
+            if path not in _DAY_CACHE and len(_DAY_CACHE) >= _DAY_CACHE_MAX:
+                _DAY_CACHE.pop(next(iter(_DAY_CACHE)))
+            _DAY_CACHE[path] = (key, out)
+        return list(out)
+
+    @staticmethod
+    def _parse_day(path):
         out = []
         try:
-            with open(self.day_path(day)) as f:
+            with open(path) as f:
                 for line in f:
                     try:
                         item = json.loads(line)
