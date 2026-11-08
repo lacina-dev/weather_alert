@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
@@ -545,7 +546,8 @@ class NodeWithoutData(unittest.TestCase):
     """T22: what the node really publishes from a source without any frame —
     mosaic with its service down behaves as ČHMÚ without data."""
 
-    def publish(self, source):
+    @staticmethod
+    def make_node(source):
         node_mod = _load_node()
         node = node_mod.Node.__new__(node_mod.Node)
         node.radar = source
@@ -558,6 +560,10 @@ class NodeWithoutData(unittest.TestCase):
         for name in ('pub_alert', 'nex_log_info_pub', 'pub_forecast_img', 'pub_map_img',
                      'pub_rain_img', 'pub_rain_meta'):
             setattr(node, name, _Rec())
+        return node
+
+    def publish(self, source):
+        node = self.make_node(source)
         node.publish_data()
         return node.pub_alert.msgs
 
@@ -584,6 +590,82 @@ class NodeWithoutData(unittest.TestCase):
         keys = ('rain_now', 'rain_alert', 'status_now', 'status_past10m', 'status_nowcast30m')
         a, b = self.publish(chmi)[0], self.publish(m)[0]
         self.assertEqual([getattr(a, k) for k in keys], [getattr(b, k) for k in keys])
+
+
+class NodeOutage(unittest.TestCase):
+    """T22d (T20): the node's poll loop (check_for_new_data) when the source
+    fails, mosaic against ČHMÚ. Without any frame both publish the UNAVAILABLE
+    RainAlert at every poll; with frames held both publish nothing new, so the
+    last RainAlert ages (the mower's weather_max_age_min = no weather data)
+    instead of a fresh "dry"; stale data at the robot publishes nothing either."""
+
+    FIELDS = ['status_now'] + ['status_past%dm' % k for k in (10, 20, 30, 40, 50, 60)] \
+        + ['status_nowcast%dm' % k for k in (10, 20, 30)]
+
+    def chmi(self, observations):
+        c = Chmi.__new__(Chmi)          # no network: _list_remote fails below
+        c.latitude, c.longitude = PRAHA
+        c.radar_config = dict(RADAR)
+        c.observations, c.nowcasts = list(observations), []
+        c.generated = T0 if observations else 0
+        c._last_fetch, c._last_nowcast_tar = 0, None
+        return c
+
+    def dead_chmi(self):
+        import weather_alert.chmi as chmi_mod
+
+        def down(url):
+            raise OSError('connection refused')
+        return mock.patch.object(chmi_mod, '_list_remote', down)
+
+    def test_down_without_data_unavailable_every_poll(self):
+        m = Mosaic(PRAHA[0], PRAHA[1], dict(RADAR), 0,
+                   {'url': 'http://127.0.0.1:%d' % free_port(), 'timeout_s': 2})
+        mn = NodeWithoutData.make_node(m)
+        with self.dead_chmi():
+            cn = NodeWithoutData.make_node(self.chmi([]))
+            for _ in range(2):
+                m._last_check = 0
+                mn.check_for_new_data()
+                cn.check_for_new_data()
+        for node in (mn, cn):
+            self.assertEqual(len(node.pub_alert.msgs), 2)
+            for msg in node.pub_alert.msgs:
+                self.assertEqual((msg.rain_now, msg.rain_alert), (0, False))
+                self.assertEqual({getattr(msg, f) for f in self.FIELDS},
+                                 {STATUS_UNAVAILABLE})
+
+    def test_down_with_frames_held_publishes_nothing_new(self):
+        sc = Scenario(T0)
+        svc = FakeService(sc)
+        m = Mosaic(PRAHA[0], PRAHA[1], dict(RADAR), 0, {'url': svc.url, 'timeout_s': 2})
+        m.process_data()
+        svc.stop()
+        self.assertTrue(m.observations)
+        mn = NodeWithoutData.make_node(m)
+        m._last_check = 0
+        mn.check_for_new_data()
+        self.assertEqual(mn.pub_alert.msgs, [])
+        self.assertTrue(m.last_error)
+        with self.dead_chmi():
+            cn = NodeWithoutData.make_node(self.chmi([object()]))
+            cn.check_for_new_data()
+        self.assertEqual(cn.pub_alert.msgs, [])
+
+    def test_stale_data_at_robot_publishes_nothing(self):
+        sc = Scenario(T0)
+        sc.stale[iso(T0)] = [(0.0, 0.0, 30.0)]
+        svc = FakeService(sc)
+        try:
+            m = Mosaic(PRAHA[0], PRAHA[1], dict(RADAR), 0, {'url': svc.url, 'timeout_s': 2})
+            mn = NodeWithoutData.make_node(m)
+            m._last_check = 0
+            mn.check_for_new_data()
+        finally:
+            svc.stop()
+        self.assertTrue(m.observations)
+        self.assertEqual(m.observations[-1].status, STATUS_UNAVAILABLE)
+        self.assertEqual(mn.pub_alert.msgs, [])
 
 
 class Polling(Base):
