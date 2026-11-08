@@ -3,9 +3,11 @@ general:
   default_location: "Custom"
   # Use map as background 0: no map, 1: osm, 2: google satellite
   use_map: 1
-  # Radar data source: "rainviewer" or "chmi"
+  # Radar data source: "rainviewer", "chmi" or "mosaic"
   # rainviewer – global coverage, no API key required, free tier has no nowcast, max zoom 7
   # chmi       – Czech Republic + neighbours, real radar + 60-min nowcast, completely free
+  # mosaic     – multi-source mosaic (ČHMÚ, OPERA, RainViewer, …) from the local
+  #              precip-mosaic service (package vitulus_precip), see "mosaic:" below
   source: "chmi"
 
 radar:
@@ -30,6 +32,19 @@ radar:
   rain_threshold: 100
   # Color scheme values 0-8 (RainViewer only). See https://www.rainviewer.com/api/color-schemes.html
   color: 1
+
+# precip-mosaic service, used only with general.source: "mosaic".
+# The service must run (vitulus_precip, `vitulus-precip serve`) with an area that
+# contains the location. Frames are evaluated with the radar: frames above.
+mosaic:
+  url: "http://localhost:8097"
+  timeout_s: 10        # per HTTP request
+  poll_s: 60           # how often the service is asked for a new frame [s] (asked from poll_s - 5 s on: the loop also runs every 60 s)
+  rain_mmh: 0.1        # pixel at or above this rate [mm/h] counts as rain (0.1 ≈ 7 dBZ)
+  half_km: 0           # half side of the radar picture [km]; 0 = 1.6 × frame_warning
+  nowcast_max_min: 60  # nowcast frames further ahead are not fetched [min]
+  min_covered: 0.5     # share of the frame_rain square that must have radar data;
+                       # less = status UNAVAILABLE (NOW frame: no RainAlert published)
 
 
 # List of locations

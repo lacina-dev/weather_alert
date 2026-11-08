@@ -12,6 +12,8 @@ Supported sources:
     current frame only.
   * ``chmi``       – Czech Hydrometeorological Institute open data, with a
     real 60-min nowcast (6 × 10-min steps).
+  * ``mosaic``     – multi-source mosaic from the local precip-mosaic service
+    (package vitulus_precip, ``mosaic.url`` in the config).
 """
 import json
 import os
@@ -28,15 +30,18 @@ import yaml
 from cv_bridge import CvBridge
 from weather_alert.rainviewer import RainViewer
 from weather_alert.chmi import Chmi
+from weather_alert.mosaic import Mosaic
 from weather_alert.msg import RainAlert
 from weather_alert.radar_log import RadarLog, sample_from
 
 
 def _build_source(source: str, lat: float, lon: float,
-                  radar_config: dict, use_map: int):
+                  radar_config: dict, use_map: int, mosaic_config: dict = None):
     """Instantiate and return the configured radar source object."""
     if source == "chmi":
         return Chmi(lat, lon, radar_config, use_map)
+    if source == "mosaic":
+        return Mosaic(lat, lon, radar_config, use_map, mosaic_config)
     return RainViewer(lat, lon, radar_config, use_map)
 
 
@@ -103,6 +108,7 @@ class Node:
         self.radar_config = None
         self.use_map = None
         self.source = 'rainviewer'
+        self.mosaic_config = {}
         self._last_logged_generated = None
         self.namespace = rospy.get_namespace()
         # Permanent radar record (~/.vitulus/weather/radar), see radar_log.py
@@ -111,7 +117,8 @@ class Node:
         rospy.loginfo(f"<{rospy.get_caller_id()}> "
                       f"Using radar source: {self.source.upper()}")
         self.radar = _build_source(self.source, self.lat, self.lon,
-                                   self.radar_config, self.use_map)
+                                   self.radar_config, self.use_map,
+                                   self.mosaic_config)
         self.radar.process_data()
         self.publish_data()
 
@@ -135,6 +142,7 @@ class Node:
         self.radar_config = dict(config['radar'])
         self.use_map = int(config['general']['use_map'])
         self.source = str(config['general'].get('source', 'rainviewer')).lower()
+        self.mosaic_config = dict(config.get('mosaic') or {})
 
     def _merge_local_config(self, config: dict):
         """Merge the optional, gitignored config.local.yaml over the rosparams.

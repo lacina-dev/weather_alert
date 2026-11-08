@@ -1,6 +1,6 @@
 """
 Used to run the program. It reads the config file, gets the data from the configured
-radar source (RainViewer or ČHMÚ), processes it, and shows the images and data.
+radar source (RainViewer, ČHMÚ or precip-mosaic), processes it, and shows the images and data.
 It then enters a loop where it checks for new data every 20 seconds.
 It's helpful for tuning the configuration to your needs.
 """
@@ -11,13 +11,16 @@ import yaml
 from weather_alert.rainviewer import RainViewer
 from weather_alert.rainviewer import show
 from weather_alert.chmi import Chmi
+from weather_alert.mosaic import Mosaic
 
 
 def _build_source(source: str, lat: float, lon: float,
-                  radar_config: dict, use_map: int):
+                  radar_config: dict, use_map: int, mosaic_config: dict = None):
     """Instantiate and return the configured radar source object."""
     if source == "chmi":
         return Chmi(lat, lon, radar_config, use_map)
+    if source == "mosaic":
+        return Mosaic(lat, lon, radar_config, use_map, mosaic_config)
     return RainViewer(lat, lon, radar_config, use_map)
 
 
@@ -38,7 +41,7 @@ def main():
     source = str(config['general'].get('source', 'rainviewer')).lower()
 
     print(f'Getting data from {source.upper()} radar source...')
-    radar = _build_source(source, lat, lon, radar_config, use_map)
+    radar = _build_source(source, lat, lon, radar_config, use_map, config.get('mosaic'))
     radar.process_data()
     radar.print_rain_status()
 
